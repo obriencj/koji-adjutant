@@ -1,0 +1,209 @@
+# Koji-Adjutant - Podman-Based Build Worker
+
+## Project Overview
+
+Koji-Adjutant is a fork of the koji build daemon (kojid) that replaces mock chroot-based build environments with podman containers. It acts as a worker node in a koji build system, receiving tasks from koji hub and executing them in isolated containers rather than mock chroots.
+
+## Core Mission
+
+**Transform kojid from mock-based to podman-based build execution while maintaining full compatibility with the koji hub API and task structure.**
+
+## Key Constraint
+
+Maintain compatibility with:
+- Koji hub API and task protocol
+- Existing kojid configuration file format
+- Task result reporting mechanisms
+- Build artifact layout and formats
+
+## Architecture Context
+
+Koji consists of three main pieces:
+1. **koji** - Core library and APIs
+2. **kojihub** - Central hub service managing database, tasks, and coordination
+3. **builder/kojid** - Worker daemon executing tasks (this is what we're forking)
+
+## Reference Architecture
+
+### Koji Directory Structure
+- **Koji**: `/home/siege/koji/koji/` - Common API
+- **Hub**: `/home/siege/koji/kojihub/` - Central service
+- **Builder**: `/home/siege/koji/builder/` - Builder Service
+- **CLI**: `/home/siege/koji/cli/` - Koji client
+
+### Koji-Boxed Directory Structure
+- **Hub**: `/home/siege/koji-boxed/services/koji-hub/` - Central service
+- **Worker (mock-based)**: `/home/siege/koji-boxed/services/koji-worker/` - Current implementation
+- **Source**: `/home/siege/koji/builder/kojid` - Original kojid source
+- **Adjutant Reference**: `/home/siege/koji-adjutant/koji_adjutant/kojid.py` - Our starting point
+
+### Key Reference Files
+- `/home/siege/koji-boxed/services/common/Dockerfile` - Base container image
+- `/home/siege/koji-boxed/services/common/orch.sh` - Resource management CLI
+- `/home/siege/koji-boxed/services/koji-worker/entrypoint.sh` - Worker startup
+- `/home/siege/koji-boxed/services/koji-worker/kojid.conf.template` - Configuration template
+
+## Development Approach
+
+### Adaptation Strategy: Middle-Out
+
+1. **Define Interfaces**: Create abstraction layers for container management
+2. **Adapt Existing**: Refactor kojid code to use new interfaces
+3. **Extend New**: Implement podman-specific execution layer
+
+### Container Approach
+
+**One ephemeral container per task** - Similar to mock's isolated chroot approach:
+- Each task spawns a dedicated container
+- Container lifecycle: create → execute → cleanup
+- Full isolation between concurrent tasks
+- Containers discarded after task completion
+
+## Key Technology Stack
+
+- **Language**: Python 3.11+ (migrating from Python 2 of original kojid)
+- **Container**: Podman (replacing mock)
+- **Base Image**: AlmaLinux 10-based (matching koji-boxed environment)
+- **Storage**: Shared volumes for build artifacts (`/mnt/koji`)
+- **Auth**: Kerberos via orch service
+- **Integration**: Direct compatibility with koji-boxed setup
+
+## Code Style & Standards
+
+### Python Code
+- Use Python 3.11+ features (type hints, f-strings, pathlib)
+- Follow PEP 8 style guidelines
+- Use logging instead of print statements
+- Prefer pathlib.Path over os.path
+- Proper error handling with try/except blocks
+
+### Shell Scripts
+- Use bash with `set -euo pipefail` for error handling
+- Meaningful variable names and comments
+- Quote variables to prevent word splitting
+- Follow POSIX standards where possible
+
+### Container Management
+- Use podman Python API (not subprocess calls)
+- Proper resource cleanup on failure
+- Security: Run as non-root when possible
+- Volume management: Mount only necessary paths
+- Logging: Stream container logs to koji log system
+
+## Task Handler Architecture
+
+The original kojid uses BaseTaskHandler pattern:
+- Each task type inherits from `BaseTaskHandler`
+- Key handlers: `BuildTask`, `ChainBuildTask`, `BaseBuildTask`
+- Mock is used in `BaseBuildTask` for chroot management
+- Our adjutant must maintain this pattern while swapping mock for podman
+
+## Reference to Koji Codebase
+
+When implementing adjutant features:
+1. First consult `/home/siege/koji-adjutant/koji_adjutant/kojid.py` (our working copy)
+2. Reference koji patterns in `/home/siege/koji/builder/kojid` for source of truth
+3. Use `/home/siege/koji-boxed/services/` for integration patterns
+4. Check koji-boxed containerization patterns in Dockerfiles and entrypoints
+
+## Integration Points
+
+### With Koji Hub
+- XMLRPC API for task polling and reporting
+- Kerberos authentication via keytabs from orch service
+- Shared filesystem access for build artifacts
+- Task result uploads and status reporting
+
+### With Koji-Boxed
+- Use orch service for resource management
+- Follow existing container orchestration patterns
+- Share storage volumes with hub and other services
+- Use established logging and monitoring patterns
+
+## Project Goals
+
+### Phase 1: Foundation
+- [ ] Define container abstraction interface
+- [ ] Create podman integration layer
+- [ ] Implement basic task execution in container
+- [ ] Validate with simple tasks
+
+### Phase 2: Core Functionality
+- [ ] Implement build task handlers
+- [ ] Container image management
+- [ ] Volume mounting strategy
+- [ ] Error handling and cleanup
+
+### Phase 3: Advanced Features
+- [ ] Chain build support
+- [ ] Image build tasks
+- [ ] Repo management tasks
+- [ ] Performance optimization
+
+### Phase 4: Production Readiness
+- [ ] Comprehensive testing
+- [ ] Documentation
+- [ ] Performance benchmarking
+- [ ] Integration with koji-boxed
+
+## Personality-Based Development
+
+This project uses specialized AI personalities (cursor rules) to guide different aspects:
+
+1. **Strategic Planner** - High-level planning and requirements
+2. **Systems Architect** - Component design and interfaces
+3. **Implementation Lead** - Code adaptation and structure
+4. **Container Engineer** - Podman expertise and patterns
+5. **Quality Engineer** - Testing and validation
+
+Coordinate between these personalities when making architectural or implementation decisions.
+
+## Key Principles
+
+1. **Compatibility First**: Maintain compatibility with koji hub at all costs
+2. **Incremental Adaptation**: Reuse as much kojid code as possible
+3. **Clean Abstractions**: Isolate podman-specific code in dedicated modules
+4. **Security Conscious**: Follow container security best practices
+5. **Observable**: Log everything, make debugging easy
+6. **Testable**: Design for unit and integration testing
+
+## Directory Structure
+
+```
+/home/siege/koji-adjutant/
+├── .cursor/
+│   └── rules/                 # Personality rule files
+├── .cursorrules               # This file
+├── koji_adjutant/
+│   ├── kojid.py               # Original kojid (reference)
+│   └── [adapter modules]      # To be created
+├── docs/                      # Generated documentation
+│   ├── architecture/          # Architecture docs
+│   ├── planning/              # Planning docs
+│   └── implementation/        # Implementation docs
+└── tests/                     # To be created
+```
+
+## Common Commands
+
+- Reference koji-boxed: `cd /home/siege/koji-boxed && make <command>`
+- View kojid source: Explore `/home/siege/koji-adjutant/koji_adjutant/kojid.py`
+- Check integration patterns: Review `/home/siege/koji-boxed/services/`
+
+## When Working on This Project
+
+1. Always consider hub compatibility implications
+2. Reference original kojid for behavioral correctness
+3. Coordinate with personality rules for guidance
+4. Write tests as you implement
+5. Document design decisions in appropriate docs/ subdirectories
+6. Consult koji-boxed patterns for integration approaches
+
+## Success Criteria
+
+The adjutant is successful when:
+1. It can execute koji build tasks in containers
+2. Hub cannot distinguish it from a mock-based kojid
+3. It integrates seamlessly with koji-boxed
+4. Performance is comparable to mock-based execution
+5. It handles errors gracefully and cleans up resources
