@@ -80,14 +80,15 @@ def test_exec_basic_command(podman_manager, ensure_image_available, tmp_path):
 
     handle = manager.create(spec)
     manager.start(handle)
-    manager.stream_logs(handle, sink, follow=False)
+    # Don't stream container logs for this test - we only care about exec output
 
     try:
-        # Execute a simple command
-        exit_code = manager.exec(handle, ["/bin/echo", "hello", "world"], sink)
+        # Execute a simple command with dedicated sink
+        exec_sink = InMemoryLogSink()
+        exit_code = manager.exec(handle, ["/bin/echo", "hello", "world"], exec_sink)
 
         assert exit_code == 0
-        output = sink.stdout.decode("utf-8", errors="replace")
+        output = exec_sink.stdout.decode("utf-8", errors="replace")
         assert "hello world" in output or "hello" in output
 
     finally:

@@ -142,42 +142,71 @@ class PodmanManager(ContainerManager):
 
         try:
             # Podman exec with streaming output
-            # exec_run with stream=True returns a generator of (stdout, stderr) tuples
-            exec_gen = container.exec_run(
+            # exec_run with stream=True returns (exit_code, generator)
+            exec_result = container.exec_run(
                 cmd=list(command),
                 environment=environment or {},
                 stream=True,
                 demux=True,  # Separate stdout/stderr
             )
 
+            # exec_result is (exit_code, generator) - unpack it
+            if isinstance(exec_result, tuple) and len(exec_result) == 2:
+                exit_code_hint, exec_gen = exec_result
+            else:
+                # Fallback: treat as generator directly
+                exec_gen = exec_result
+                exit_code_hint = None
+
             # Stream output to sink
+            # Generator yields (stdout_bytes, stderr_bytes) tuples or raw bytes
             for chunk in exec_gen:
                 if chunk is None:
                     continue
-                stdout_data, stderr_data = chunk
-                if stdout_data:
-                    sink.write_stdout(stdout_data)
-                if stderr_data:
-                    sink.write_stderr(stderr_data)
+                # Handle both tuple (stdout, stderr) and bytes formats
+                if isinstance(chunk, tuple):
+                    # Handle tuple format: (stdout_bytes, stderr_bytes)
+                    # Some versions may return tuples with different lengths
+                    if len(chunk) >= 2:
+                        stdout_data, stderr_data = chunk[0], chunk[1]
+                    elif len(chunk) == 1:
+                        stdout_data, stderr_data = chunk[0], None
+                    else:
+                        continue  # Skip empty tuples
 
-            # Get exit code - exec_run with stream=False returns (exit_code, output)
-            # We execute again just to get exit code (podman-py limitation)
-            # TODO: Optimize by inspecting exec instance if podman-py supports it
+                    if stdout_data:
+                        sink.write_stdout(stdout_data)
+                    if stderr_data:
+                        sink.write_stderr(stderr_data)
+                elif isinstance(chunk, bytes):
+                    # When demux doesn't work, treat as stdout
+                    sink.write_stdout(chunk)
+                else:
+                    # Defensive: convert to bytes if possible
+                    try:
+                        data = bytes(chunk)
+                        sink.write_stdout(data)
+                    except (TypeError, ValueError):
+                        # Skip chunks we can't handle
+                        continue
+
+            # Get exit code
+            # If we got exit_code_hint from the streaming call, use it if valid
+            if exit_code_hint is not None:
+                return int(exit_code_hint) if exit_code_hint else 0
+
+            # Otherwise, exec again to get exit code (podman-py doesn't always return it reliably)
             exit_result = container.exec_run(
                 cmd=list(command),
                 environment=environment or {},
                 stream=False,
             )
-            
-            # Handle both tuple and object return types
-            if isinstance(exit_result, tuple):
-                exit_code = exit_result[0]
-            elif hasattr(exit_result, "exit_code"):
-                exit_code = exit_result.exit_code
-            else:
-                exit_code = 0
 
-            return exit_code
+            # Handle both tuple (exit_code, output) and direct exit_code
+            if isinstance(exit_result, tuple):
+                return int(exit_result[0]) if exit_result[0] is not None else 0
+            else:
+                return int(exit_result) if exit_result is not None else 0
 
         except APIError as exc:
             raise ContainerError(f"failed to execute command in container: {command}", cause=exc)
