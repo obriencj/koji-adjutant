@@ -130,6 +130,22 @@ try:
 except ImportError:  # pragma: no cover
     ozif_enabled = False
 
+# Koji-Adjutant imports for container-based task execution
+try:
+    from pathlib import Path
+    from koji_adjutant.container.podman_manager import PodmanManager
+    from koji_adjutant.task_adapters.buildarch import BuildArchAdapter
+    from koji_adjutant.task_adapters.createrepo import CreaterepoAdapter
+    from koji_adjutant.task_adapters.logging import FileKojiLogSink
+    from koji_adjutant.task_adapters.base import TaskContext
+except ImportError:
+    # Fallback if adjutant modules not available
+    BuildArchAdapter = None
+    CreaterepoAdapter = None
+    FileKojiLogSink = None
+    TaskContext = None
+    PodmanManager = None
+
 
 def main(options, session):
     logger = logging.getLogger("koji.build")
@@ -1644,46 +1660,125 @@ class BuildArchTask(BaseBuildTask):
 
         self.updateWeight(name)
 
-        rootopts = {
-            'repo_id': repo_id
-        }
-        if arch == "noarch":
-            # There could have been forced taskarch Exclusive/ExcludeArch,
-            # so we should honor it here.
-            task = self.session.getTaskInfo(self.id)
-            preferred_arch = task['arch']
-        else:
-            preferred_arch = None
-        br_arch = self.find_arch(arch, self.session.host.getHost(),
-                                 self.session.getBuildConfig(root, event=event_id),
-                                 preferred_arch=preferred_arch)
-        broot = BuildRoot(self.session, self.options, root, br_arch, self.id, **rootopts)
-        broot.workdir = self.workdir
-
-        self.logger.debug("Initializing buildroot")
-        broot.init()
-
-        # run build
-        self.logger.debug("Running build")
-        broot.build(fn, arch)
-
-        # extract results
-        resultdir = broot.resultdir()
-        rpm_files = []
-        srpm_files = []
-        log_files = list(broot.logs)
-        unexpected = []
-        for f in os.listdir(resultdir):
-            # files here should have one of two extensions: .log and .rpm
-            if f[-4:] in (".log"):
-                pass
-                # should already be in log_files
-            elif f[-8:] == ".src.rpm":
-                srpm_files.append(f)
-            elif f[-4:] == ".rpm":
-                rpm_files.append(f)
+        # Check if adjutant adapters are available
+        if BuildArchAdapter is None or PodmanManager is None or FileKojiLogSink is None:
+            # Fallback to original BuildRoot-based execution
+            rootopts = {
+                'repo_id': repo_id
+            }
+            if arch == "noarch":
+                # There could have been forced taskarch Exclusive/ExcludeArch,
+                # so we should honor it here.
+                task = self.session.getTaskInfo(self.id)
+                preferred_arch = task['arch']
             else:
-                unexpected.append(f)
+                preferred_arch = None
+            br_arch = self.find_arch(arch, self.session.host.getHost(),
+                                     self.session.getBuildConfig(root, event=event_id),
+                                     preferred_arch=preferred_arch)
+            broot = BuildRoot(self.session, self.options, root, br_arch, self.id, **rootopts)
+            broot.workdir = self.workdir
+
+            self.logger.debug("Initializing buildroot")
+            broot.init()
+
+            # run build
+            self.logger.debug("Running build")
+            broot.build(fn, arch)
+
+            # extract results
+            resultdir = broot.resultdir()
+            rpm_files = []
+            srpm_files = []
+            log_files = list(broot.logs)
+            unexpected = []
+            for f in os.listdir(resultdir):
+                # files here should have one of two extensions: .log and .rpm
+                if f[-4:] in (".log"):
+                    pass
+                    # should already be in log_files
+                elif f[-8:] == ".src.rpm":
+                    srpm_files.append(f)
+                elif f[-4:] == ".rpm":
+                    rpm_files.append(f)
+                else:
+                    unexpected.append(f)
+            uploadpath = broot.getUploadPath()
+            brootid = broot.id
+            unexpected = []
+            # Note: files will be uploaded in later code
+        else:
+            # Use container-based adapter
+            self.logger.debug("Using container-based build execution")
+            
+            # Extract task parameters for adapter
+            task_params = {
+                'pkg': pkg,
+                'root': root,
+                'arch': arch,
+                'keep_srpm': keep_srpm,
+                'opts': opts,
+            }
+            
+            # Create TaskContext
+            # work_dir should be /mnt/koji/work/<task_id>
+            work_dir = Path(self.workdir)
+            koji_mount_root = Path(self.options.topdir)
+            ctx = TaskContext(
+                task_id=self.id,
+                work_dir=work_dir,
+                koji_mount_root=koji_mount_root,
+                environment={},
+            )
+            
+            # Initialize PodmanManager and log sink
+            manager = PodmanManager()
+            log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
+            sink = FileKojiLogSink(self.logger, log_file_path)
+            
+            try:
+                # Run adapter
+                adapter = BuildArchAdapter()
+                exit_code, adapter_result = adapter.run(ctx, manager, sink, task_params)
+                
+                if exit_code != 0:
+                    raise koji.BuildError("Container build failed with exit code %d" % exit_code)
+                
+                # Extract results from adapter (paths are relative to upload base)
+                # Adapter returns: {rpms: [paths], srpms: [paths], logs: [paths], brootid: int}
+                rpm_paths = adapter_result.get('rpms', [])
+                srpm_paths = adapter_result.get('srpms', [])
+                log_paths = adapter_result.get('logs', [])
+                brootid = adapter_result.get('brootid', self.id)
+                
+                # Extract filenames for processing
+                # resultdir as string for compatibility with os.path.join
+                resultdir = str(work_dir / 'result')
+                rpm_files = []
+                srpm_files = []
+                log_files = []
+                unexpected = []
+                
+                # Parse paths from adapter (format: work/<task_id>/result/filename)
+                for path in rpm_paths:
+                    # path is like "work/<task_id>/result/file.rpm"
+                    filename = os.path.basename(path)
+                    rpm_files.append(filename)
+                
+                for path in srpm_paths:
+                    filename = os.path.basename(path)
+                    srpm_files.append(filename)
+                
+                for path in log_paths:
+                    filename = os.path.basename(path)
+                    log_files.append(filename)
+                
+                # Construct uploadpath (matching BuildRoot format)
+                uploadpath = "work/%d/result" % self.id
+                
+            finally:
+                # Ensure log sink is closed
+                sink.close()
 
         # for noarch rpms compute rpmdiff hash
         rpmdiff_hash = {self.id: {}}
@@ -1694,7 +1789,8 @@ class BuildArchTask(BaseBuildTask):
                 rpmdiff_hash[self.id][rpmf] = d.kojihash()
         if rpmdiff_hash[self.id]:
             log_name = 'noarch_rpmdiff.json'
-            noarch_hash_path = os.path.join(broot.workdir, log_name)
+            # Use self.workdir instead of broot.workdir for compatibility
+            noarch_hash_path = os.path.join(self.workdir, log_name)
             koji.dump_json(noarch_hash_path, rpmdiff_hash, indent=2, sort_keys=True)
             self.uploadFile(noarch_hash_path)
             log_files.append(log_name)
@@ -1705,7 +1801,6 @@ class BuildArchTask(BaseBuildTask):
         self.logger.debug("unexpected: %r" % unexpected)
 
         # upload files to storage server
-        uploadpath = broot.getUploadPath()
         for f in rpm_files:
             self.uploadFile("%s/%s" % (resultdir, f))
         self.logger.debug("keep srpm %i %s %s" % (self.id, keep_srpm, opts))
@@ -1731,9 +1826,11 @@ class BuildArchTask(BaseBuildTask):
             ret['srpms'] = []
         ret['logs'] = ["%s/%s" % (uploadpath, f) for f in log_files]
 
-        ret['brootid'] = broot.id
+        ret['brootid'] = brootid
 
-        broot.expire()
+        # Only expire BuildRoot if we used it
+        if BuildArchAdapter is None or PodmanManager is None or FileKojiLogSink is None:
+            broot.expire()
         # Let TaskManager clean up
 
         return ret
@@ -5999,7 +6096,82 @@ class CreaterepoTask(BaseTaskHandler):
         pkglist = os.path.join(self.repodir, 'pkglist')
         if os.path.getsize(pkglist) == 0:
             pkglist = None
-        self.create_local_repo(rinfo, arch, pkglist, groupdata, oldrepo)
+        
+        # Check if adjutant adapters are available
+        if CreaterepoAdapter is None or PodmanManager is None or FileKojiLogSink is None:
+            # Fallback to original host-based execution
+            self.create_local_repo(rinfo, arch, pkglist, groupdata, oldrepo)
+        else:
+            # Use container-based adapter
+            self.logger.debug("Using container-based createrepo execution")
+            
+            # Ensure output directory exists
+            koji.ensuredir(self.outdir)
+            
+            # Handle oldrepo repodata copying (must be done on host before container)
+            oldrepodata = None
+            if pkglist and oldrepo and self.options.createrepo_update:
+                oldrepo = self.session.repoInfo(oldrepo['id'], strict=True)
+                oldpath = self.pathinfo.repo(oldrepo['id'], oldrepo['tag_name'])
+                olddatadir = '%s/%s/repodata' % (oldpath, arch)
+                if not os.path.isdir(olddatadir):
+                    self.logger.warning("old repodata is missing: %s" % olddatadir)
+                else:
+                    shutil.copytree(olddatadir, self.datadir)
+                    oldorigins = os.path.join(self.datadir, 'pkgorigins.gz')
+                    if os.path.isfile(oldorigins):
+                        # remove any previous origins file and rely on mergerepos
+                        # to rewrite it (if we have external repos to merge)
+                        os.unlink(oldorigins)
+                    oldrepodata = self.datadir
+            
+            # Extract task parameters for adapter
+            task_params = {
+                'repo_id': repo_id,
+                'arch': arch,
+                'oldrepo': oldrepo,
+                'repodir': self.repodir,
+                'pkglist': pkglist,
+                'groupdata': groupdata if os.path.isfile(groupdata) else None,
+                'oldrepodata': oldrepodata,
+                'createrepo_update': self.options.createrepo_update if (pkglist and oldrepo) else False,
+                'createrepo_skip_stat': self.options.createrepo_skip_stat,
+            }
+            
+            # Create TaskContext
+            work_dir = Path(self.workdir)
+            koji_mount_root = Path(self.options.topdir)
+            ctx = TaskContext(
+                task_id=self.id,
+                work_dir=work_dir,
+                koji_mount_root=koji_mount_root,
+                environment={},
+            )
+            
+            # Initialize PodmanManager and log sink
+            manager = PodmanManager()
+            log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
+            sink = FileKojiLogSink(self.logger, log_file_path)
+            
+            try:
+                # Run adapter
+                adapter = CreaterepoAdapter()
+                exit_code, adapter_result = adapter.run(ctx, manager, sink, task_params)
+                
+                if exit_code != 0:
+                    raise koji.GenericError("Container createrepo failed with exit code %d" % exit_code)
+                
+                # Adapter returns [uploadpath, files] matching kojid format
+                # For now, we'll use the result from adapter, but we still need to
+                # handle uploads ourselves to match the original handler pattern
+                adapter_uploadpath, adapter_files = adapter_result
+                
+                # Note: adapter files may be different from what we collect below,
+                # but we'll collect from self.datadir to match original behavior
+                
+            finally:
+                # Ensure log sink is closed
+                sink.close()
         external_repos = self.session.getExternalRepoList(
             rinfo['tag_id'], event=rinfo['create_event'])
         if external_repos:

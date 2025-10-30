@@ -1,0 +1,297 @@
+"""Configuration management for koji-adjutant.
+
+This module provides configuration parsing from kojid.conf files and
+maintains backward compatibility with Phase 1 hardcoded defaults.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any, Callable, Dict, Mapping, Optional
+
+try:
+    import koji
+except ImportError:
+    koji = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
+
+# Module-level config cache
+_config: Optional[Dict[str, Any]] = None
+
+
+def _parse_config_file(config_file: Optional[str] = None) -> Dict[str, Any]:
+    """Parse kojid.conf file using koji library.
+
+    Args:
+        config_file: Optional path to config file. If None, uses koji default.
+
+    Returns:
+        Parsed config dict with [adjutant] section values.
+    """
+    if koji is None:
+        logger.warning(
+            "koji library not available, using hardcoded defaults. "
+            "Install koji package for config file support."
+        )
+        return {}
+
+    try:
+        if config_file:
+            config_dict = koji.read_config_files([config_file])
+        else:
+            # Use koji's default config file locations
+            config_dict = koji.read_config_files()
+    except Exception as exc:
+        logger.warning("Failed to parse config file: %s", exc)
+        return {}
+
+    # Extract [adjutant] section
+    adjutant_config = config_dict.get("adjutant", {})
+    return adjutant_config
+
+
+def _get_config() -> Dict[str, Any]:
+    """Get parsed config dict, initializing if needed.
+
+    Returns:
+        Config dict with [adjutant] section values.
+    """
+    global _config
+    if _config is None:
+        # Try to parse config file
+        config_file = os.environ.get("KOJI_CONFIG")
+        _config = _parse_config_file(config_file)
+    return _config
+
+
+def _get_config_value(
+    key: str,
+    default: Any,
+    env_var: Optional[str] = None,
+    converter: Optional[Callable[[Any], Any]] = None,
+) -> Any:
+    """Get config value with fallback chain: env var ? config file ? default.
+
+    Args:
+        key: Config key name (in [adjutant] section)
+        default: Default value if not found
+        env_var: Optional environment variable name (e.g., KOJI_ADJUTANT_KEY)
+        converter: Optional function to convert string value (e.g., int, bool)
+
+    Returns:
+        Config value (converted if converter provided)
+    """
+    # Check environment variable first
+    if env_var:
+        env_value = os.environ.get(env_var)
+        if env_value is not None:
+            if converter:
+                try:
+                    return converter(env_value)
+                except (ValueError, TypeError) as exc:
+                    logger.warning(
+                        "Invalid value for %s: %s, using default", env_var, env_value
+                    )
+            return env_value
+
+    # Check config file
+    config = _get_config()
+    value = config.get(key)
+    if value is not None:
+        if converter:
+            try:
+                return converter(value)
+            except (ValueError, TypeError) as exc:
+                logger.warning(
+                    "Invalid value for config key %s: %s, using default", key, value
+                )
+        return value
+
+    # Return default
+    return default
+
+
+def _parse_bool(value: Any) -> bool:
+    """Parse boolean value from config (string or bool).
+
+    Accepts: True, "true", "True", "1", "yes", "on" ? True
+             False, "false", "False", "0", "no", "off" ? False
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("true", "1", "yes", "on")
+    return bool(value)
+
+
+def _parse_timeouts(value: Any) -> Dict[str, int]:
+    """Parse container timeouts from config.
+
+    Accepts formats:
+    - Dict: {"pull": 300, "start": 60, "stop_grace": 20}
+    - String: "pull=300,start=60,stop_grace=20"
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        timeouts = {}
+        for item in value.split(","):
+            if "=" in item:
+                key, val = item.split("=", 1)
+                try:
+                    timeouts[key.strip()] = int(val.strip())
+                except ValueError:
+                    logger.warning("Invalid timeout value: %s", item)
+        return timeouts
+    return {"pull": 300, "start": 60, "stop_grace": 20}
+
+
+def _parse_mounts(value: Any) -> list[str]:
+    """Parse container mounts from config.
+
+    Accepts:
+    - List: ["/mnt/koji:/mnt/koji:rw:Z"]
+    - String (space or comma separated): "/mnt/koji:/mnt/koji:rw:Z"
+    """
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        # Split by comma or space
+        mounts = []
+        for item in value.replace(",", " ").split():
+            if item.strip():
+                mounts.append(item.strip())
+        return mounts
+    return ["/mnt/koji:/mnt/koji:rw:Z"]
+
+
+def _parse_labels(value: Any) -> Mapping[str, str]:
+    """Parse container labels from config.
+
+    Accepts:
+    - Dict: {"key": "value"}
+    - String: "key1=value1,key2=value2"
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        labels = {}
+        for item in value.split(","):
+            if "=" in item:
+                key, val = item.split("=", 1)
+                labels[key.strip()] = val.strip()
+        return labels
+    return {}
+
+
+def adjutant_task_image_default() -> str:
+    """Default task image (ADR 0001).
+
+    Falls back to Phase 1 default if config unavailable.
+    """
+    return _get_config_value(
+        "task_image_default",
+        "registry/almalinux:10",
+        env_var="KOJI_ADJUTANT_TASK_IMAGE_DEFAULT",
+    )
+
+
+def adjutant_image_pull_policy() -> str:
+    """Image pull policy: 'if-not-present' | 'always' | 'never'."""
+    return _get_config_value(
+        "image_pull_policy",
+        "if-not-present",
+        env_var="KOJI_ADJUTANT_IMAGE_PULL_POLICY",
+    )
+
+
+def adjutant_container_mounts() -> list[str]:
+    """Default mounts expressed as strings 'src:dst:mode:label'.
+
+    Phase 1 default: mount /mnt/koji with :Z labeling.
+    """
+    value = _get_config_value(
+        "container_mounts",
+        ["/mnt/koji:/mnt/koji:rw:Z"],
+        env_var="KOJI_ADJUTANT_CONTAINER_MOUNTS",
+    )
+    return _parse_mounts(value)
+
+
+def adjutant_network_enabled() -> bool:
+    """Network enabled by default (ADR 0001)."""
+    return _get_config_value(
+        "network_enabled",
+        True,
+        env_var="KOJI_ADJUTANT_NETWORK_ENABLED",
+        converter=_parse_bool,
+    )
+
+
+def adjutant_container_labels() -> Mapping[str, str]:
+    """Base labels to apply to all containers.
+
+    Include worker id if available in environment/config in future.
+    """
+    value = _get_config_value(
+        "container_labels",
+        {},
+        env_var="KOJI_ADJUTANT_CONTAINER_LABELS",
+    )
+    return _parse_labels(value)
+
+
+def adjutant_container_timeouts() -> Dict[str, int]:
+    """Container lifecycle timeouts in seconds.
+
+    Keys: pull, start, stop_grace
+    """
+    value = _get_config_value(
+        "container_timeouts",
+        {"pull": 300, "start": 60, "stop_grace": 20},
+        env_var="KOJI_ADJUTANT_CONTAINER_TIMEOUTS",
+    )
+    return _parse_timeouts(value)
+
+
+def adjutant_policy_enabled() -> bool:
+    """Enable hub policy-driven image selection (Phase 2.1)."""
+    return _get_config_value(
+        "policy_enabled",
+        True,
+        env_var="KOJI_ADJUTANT_POLICY_ENABLED",
+        converter=_parse_bool,
+    )
+
+
+def adjutant_policy_cache_ttl() -> int:
+    """Policy cache TTL in seconds (default: 300)."""
+    return _get_config_value(
+        "policy_cache_ttl",
+        300,
+        env_var="KOJI_ADJUTANT_POLICY_CACHE_TTL",
+        converter=int,
+    )
+
+
+def adjutant_buildroot_enabled() -> bool:
+    """Enable buildroot initialization (Phase 2.2).
+
+    When enabled, BuildArchAdapter will use BuildrootInitializer to set up
+    repositories, dependencies, and build environment. When disabled, falls back
+    to Phase 1 simple build mode.
+    """
+    return _get_config_value(
+        "buildroot_enabled",
+        True,  # Default to enabled for Phase 2.2
+        env_var="KOJI_ADJUTANT_BUILDROOT_ENABLED",
+        converter=_parse_bool,
+    )
+
+
+def reset_config() -> None:
+    """Reset config cache (useful for testing)."""
+    global _config
+    _config = None
