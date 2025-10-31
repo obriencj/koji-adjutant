@@ -7248,14 +7248,29 @@ def get_options():
                 'cert': None,
                 'serverca': None,
                 'allow_noverifyssl': False,
-                'allow_password_in_scm_url': False}
+                'allow_password_in_scm_url': False,
+                # Koji-Adjutant settings
+                'adjutant_task_image_default': 'docker.io/almalinux/almalinux:9-minimal',
+                'adjutant_image_pull_policy': 'if-not-present',
+                'adjutant_network_enabled': True,
+                'adjutant_policy_enabled': True,
+                'adjutant_policy_cache_ttl': 300,
+                'adjutant_buildroot_enabled': True,
+                'adjutant_monitoring_enabled': True,
+                'adjutant_monitoring_bind': '0.0.0.0:8080',
+                'adjutant_container_mounts': '/mnt/koji:/mnt/koji:rw:z',
+                'adjutant_container_timeouts': 'pull=300,start=60,stop_grace=20',
+                'adjutant_monitoring_container_history_ttl': 3600,
+                'adjutant_monitoring_task_history_ttl': 86400}
     if config.has_section('kojid'):
         for name, value in config.items('kojid'):
             if name in ['sleeptime', 'maxjobs', 'minspace', 'retry_interval',
                         'max_retries', 'offline_retry_interval', 'failed_buildroot_lifetime',
                         'timeout', 'rpmbuild_timeout', 'oz_install_timeout',
                         'task_avail_delay', 'buildroot_basic_cleanup_delay',
-                        'buildroot_final_cleanup_delay']:
+                        'buildroot_final_cleanup_delay',
+                        'adjutant_policy_cache_ttl', 'adjutant_monitoring_container_history_ttl',
+                        'adjutant_monitoring_task_history_ttl']:
                 try:
                     defaults[name] = int(value)
                 except ValueError:
@@ -7265,7 +7280,9 @@ def get_options():
                           'build_arch_can_fail', 'no_ssl_verify', 'log_timestamps',
                           'allow_noverifyssl', 'allowed_scms_use_config',
                           'allowed_scms_use_policy', 'allow_password_in_scm_url',
-                          'distrepo_skip_stat', 'copy_old_repodata']:
+                          'distrepo_skip_stat', 'copy_old_repodata',
+                          'adjutant_network_enabled', 'adjutant_policy_enabled',
+                          'adjutant_buildroot_enabled', 'adjutant_monitoring_enabled']:
                 defaults[name] = config.getboolean('kojid', name)
             elif name in ['plugin', 'plugins']:
                 defaults['plugin'] = value.split()
