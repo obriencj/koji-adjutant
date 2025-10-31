@@ -291,6 +291,50 @@ def adjutant_buildroot_enabled() -> bool:
     )
 
 
+def adjutant_monitoring_enabled() -> bool:
+    """Enable operational monitoring server (Phase 2.3)."""
+    return _get_config_value(
+        "monitoring_enabled",
+        False,
+        env_var="KOJI_ADJUTANT_MONITORING_ENABLED",
+        converter=_parse_bool,
+    )
+
+
+def adjutant_monitoring_bind() -> str:
+    """Monitoring server bind address (default: "127.0.0.1:8080")."""
+    value = _get_config_value(
+        "monitoring_bind",
+        "127.0.0.1:8080",
+        env_var="KOJI_ADJUTANT_MONITORING_BIND",
+    )
+    # Validate format: "host:port"
+    if ":" not in value:
+        logger.warning("Invalid monitoring_bind format, using default: 127.0.0.1:8080")
+        return "127.0.0.1:8080"
+    return value
+
+
+def adjutant_monitoring_container_history_ttl() -> int:
+    """Container history TTL in seconds (default: 3600)."""
+    return _get_config_value(
+        "monitoring_container_history_ttl",
+        3600,
+        env_var="KOJI_ADJUTANT_MONITORING_CONTAINER_HISTORY_TTL",
+        converter=int,
+    )
+
+
+def adjutant_monitoring_task_history_ttl() -> int:
+    """Task history TTL in seconds (default: 3600)."""
+    return _get_config_value(
+        "monitoring_task_history_ttl",
+        3600,
+        env_var="KOJI_ADJUTANT_MONITORING_TASK_HISTORY_TTL",
+        converter=int,
+    )
+
+
 def reset_config() -> None:
     """Reset config cache (useful for testing)."""
     global _config

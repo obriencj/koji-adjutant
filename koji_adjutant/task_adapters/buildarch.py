@@ -18,6 +18,14 @@ from .base import BaseTaskAdapter, KojiLogSink, TaskContext, default_mounts
 
 logger = logging.getLogger(__name__)
 
+# Optional monitoring registry import
+try:
+    from ..monitoring import get_task_registry
+except ImportError:
+    # Monitoring may not be available
+    def get_task_registry():
+        return None
+
 
 class BuildArchAdapter(BaseTaskAdapter):
     """Adapter for executing buildArch tasks in containers.
@@ -323,6 +331,31 @@ rpmbuild --define "_topdir {work_target_path}" \
         # Build ContainerSpec
         spec = self.build_spec(ctx, task_params, session=session, event_id=event_id)
 
+        # Register task with monitoring registry if available
+        registry = get_task_registry()
+        container_id = None
+        if registry:
+            try:
+                # Determine log path (from sink if available)
+                log_path = None
+                if hasattr(sink, "log_path"):
+                    log_path = sink.log_path
+                elif hasattr(sink, "path"):
+                    log_path = sink.path
+
+                registry.register_task(
+                    task_id=ctx.task_id,
+                    task_type="buildArch",
+                    arch=arch,
+                    tag=str(root) if root else None,
+                    srpm=pkg,
+                    container_id=None,  # Will be updated when container created
+                    log_path=log_path,
+                )
+            except Exception as exc:
+                # Don't fail task if monitoring fails
+                logger.debug("Failed to register task with monitoring: %s", exc)
+
         # Initialize exit_code
         exit_code = 0
 
@@ -353,6 +386,15 @@ rpmbuild --define "_topdir {work_target_path}" \
 
                 # Create container with sleep
                 handle = manager.create(spec)
+                container_id = handle.container_id
+
+                # Update task registry with container_id
+                if registry:
+                    try:
+                        registry.update_container_id(ctx.task_id, container_id)
+                    except Exception:
+                        pass
+
                 manager.start(handle)
                 manager.stream_logs(handle, sink, follow=False)
 
@@ -385,14 +427,34 @@ rpmbuild --define "_topdir {work_target_path}" \
 
             except Exception as exc:
                 logger.error("Exec pattern execution failed: %s", exc, exc_info=True)
+                # Update task status
+                if registry:
+                    try:
+                        registry.update_task_status(ctx.task_id, "failed")
+                    except Exception:
+                        pass
                 return (1, {"rpms": [], "srpms": [], "logs": [], "brootid": 0})
         else:
             # Phase 1 fallback: Use run() method
             try:
                 result = manager.run(spec, sink, attach_streams=True)
                 exit_code = result.exit_code
+                container_id = result.handle.container_id
+
+                # Update task registry with container_id
+                if registry:
+                    try:
+                        registry.update_container_id(ctx.task_id, container_id)
+                    except Exception:
+                        pass
             except Exception as exc:
                 logger.error("Container execution failed: %s", exc, exc_info=True)
+                # Update task status
+                if registry:
+                    try:
+                        registry.update_task_status(ctx.task_id, "failed")
+                    except Exception:
+                        pass
                 return (1, {"rpms": [], "srpms": [], "logs": [], "brootid": 0})
 
             if exit_code != 0:
@@ -432,5 +494,13 @@ rpmbuild --define "_topdir {work_target_path}" \
             "logs": log_files,
             "brootid": ctx.task_id,  # Use task_id as brootid for Phase 1
         }
+
+        # Update task status on completion
+        if registry:
+            try:
+                status = "completed" if exit_code == 0 else "failed"
+                registry.update_task_status(ctx.task_id, status)
+            except Exception:
+                pass
 
         return (exit_code, result_dict)

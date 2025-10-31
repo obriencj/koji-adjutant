@@ -161,7 +161,43 @@ def main(options, session):
             logger.info('Loading plugin: %s' % name)
             tm.scanPlugin(pt.load(name))
 
+    # Start monitoring server if enabled (Phase 2.3)
+    monitoring_server = None
+    try:
+        from koji_adjutant import config as adj_config
+        if adj_config.adjutant_monitoring_enabled():
+            # Parse bind address
+            bind_str = adj_config.adjutant_monitoring_bind()
+            if ":" in bind_str:
+                bind_address, port_str = bind_str.rsplit(":", 1)
+                port = int(port_str)
+            else:
+                bind_address = "127.0.0.1"
+                port = 8080
+
+            # Get worker ID (use hostname)
+            worker_id = socket.gethostname()
+
+            # Start monitoring server
+            from koji_adjutant.monitoring import start_monitoring_server
+            monitoring_server = start_monitoring_server(
+                bind_address=bind_address,
+                port=port,
+                worker_id=worker_id,
+                container_history_ttl=adj_config.adjutant_monitoring_container_history_ttl(),
+                task_history_ttl=adj_config.adjutant_monitoring_task_history_ttl(),
+            )
+    except Exception as exc:
+        logger.warning("Failed to start monitoring server: %s", exc)
+
     def shutdown(*args):
+        # Stop monitoring server on shutdown
+        if monitoring_server:
+            try:
+                from koji_adjutant.monitoring import stop_monitoring_server
+                stop_monitoring_server()
+            except Exception:
+                pass
         raise SystemExit
 
     def restart(*args):
@@ -212,6 +248,13 @@ def main(options, session):
             logger.warning("Exiting")
             break
     logger.warning("Shutting down, please wait...")
+    # Stop monitoring server on shutdown
+    if monitoring_server:
+        try:
+            from koji_adjutant.monitoring import stop_monitoring_server
+            stop_monitoring_server()
+        except Exception:
+            pass
     tm.shutdown()
     session.logout()
     sys.exit(exit_code)

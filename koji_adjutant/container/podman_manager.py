@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import tarfile
 from datetime import datetime, timezone
@@ -9,6 +10,8 @@ from queue import Queue
 from threading import Event, Thread
 from time import monotonic, sleep
 from typing import Dict, Iterable, Optional, Sequence
+
+logger = logging.getLogger(__name__)
 
 from .interface import (
     ContainerError,
@@ -29,6 +32,14 @@ except Exception:  # pragma: no cover - allow tests to stub
     NotFound = Exception  # type: ignore[assignment]
 
 from .. import config as adj_config
+
+# Optional monitoring registry import
+try:
+    from ..monitoring import get_container_registry
+except ImportError:
+    # Monitoring may not be available
+    def get_container_registry():
+        return None
 
 
 class PodmanManager(ContainerManager):
@@ -91,6 +102,68 @@ class PodmanManager(ContainerManager):
             container_id = self._create_container(spec)
         except APIError as exc:
             raise ContainerError("failed to create container", cause=exc)
+
+        # Register container with monitoring registry if available
+        registry = get_container_registry()
+        if registry:
+            try:
+                # Extract task_id from environment
+                task_id = None
+                if spec.environment and "KOJI_TASK_ID" in spec.environment:
+                    try:
+                        task_id = int(spec.environment["KOJI_TASK_ID"])
+                    except (ValueError, TypeError):
+                        pass
+
+                # Serialize spec for registry
+                spec_dict = {
+                    "image": spec.image,
+                    "command": list(spec.command) if spec.command else [],
+                    "workdir": str(spec.workdir) if spec.workdir else None,
+                    "user": f"{spec.user_id}:{spec.group_id}" if spec.user_id else None,
+                    "resource_limits": (
+                        {
+                            "memory_bytes": (
+                                spec.resource_limits.memory_bytes
+                                if spec.resource_limits
+                                else None
+                            ),
+                            "cpus": (
+                                spec.resource_limits.cpus
+                                if spec.resource_limits
+                                else None
+                            ),
+                        }
+                        if spec.resource_limits
+                        else {}
+                    ),
+                }
+
+                # Serialize mounts
+                mounts_list = []
+                for mount in spec.mounts:
+                    mounts_list.append(
+                        {
+                            "source": str(mount.source),
+                            "target": str(mount.target),
+                            "read_only": mount.read_only,
+                        }
+                    )
+
+                registry.register(
+                    container_id=container_id,
+                    task_id=task_id,
+                    image=spec.image,
+                    spec=spec_dict,
+                    started_at=None,  # Will be set when started
+                    mounts=mounts_list,
+                    command=list(spec.command) if spec.command else [],
+                    user=f"{spec.user_id}:{spec.group_id}" if spec.user_id else None,
+                )
+            except Exception as exc:
+                # Don't fail container creation if monitoring fails
+                logger.debug("Failed to register container with monitoring: %s", exc)
+
         return ContainerHandle(container_id=container_id)
 
     def start(self, handle: ContainerHandle) -> None:
@@ -100,6 +173,21 @@ class PodmanManager(ContainerManager):
         except APIError as exc:
             # Best-effort cleanup is handled by caller
             raise ContainerError("failed to start container", cause=exc)
+
+        # Update container status in monitoring registry
+        registry = get_container_registry()
+        if registry:
+            try:
+                from datetime import datetime, timezone
+
+                registry.update_status(handle.container_id, "running")
+                # Update started_at if not already set
+                container = registry.get(handle.container_id)
+                if container and not container.started_at:
+                    container.started_at = datetime.now(timezone.utc)
+            except Exception as exc:
+                # Don't fail container start if monitoring fails
+                logger.debug("Failed to update container status in monitoring: %s", exc)
 
     def stream_logs(self, handle: ContainerHandle, sink: LogSink, follow: bool = True) -> None:
         self._ensure_client()
@@ -118,11 +206,27 @@ class PodmanManager(ContainerManager):
         try:
             self._remove_container(handle.container_id, force=force)
         except NotFound:
+            # Container already removed, still unregister from monitoring
+            registry = get_container_registry()
+            if registry:
+                try:
+                    registry.unregister(handle.container_id)
+                except Exception:
+                    pass
             return
         except APIError as exc:
             if force:
                 raise ContainerError("failed to remove container (forced)", cause=exc)
             raise ContainerError("failed to remove container", cause=exc)
+
+        # Unregister container from monitoring registry
+        registry = get_container_registry()
+        if registry:
+            try:
+                registry.unregister(handle.container_id)
+            except Exception as exc:
+                # Don't fail container removal if monitoring fails
+                logger.debug("Failed to unregister container from monitoring: %s", exc)
 
     def exec(
         self,
