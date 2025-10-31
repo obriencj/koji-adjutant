@@ -460,23 +460,24 @@ class PodmanManager(ContainerManager):
         if host_mount_map:
             logger.info("Using host mount mappings: %s", host_mount_map)
 
-        # Validate mount sources exist before creating container
-        logger.info("Validating %d mount source(s) before container creation", len(spec.mounts))
-        for vm in spec.mounts:
-            source = Path(vm.source)
-            logger.info("Checking mount: %s -> %s (ro=%s)", source, vm.target, vm.read_only)
-            if not source.exists():
-                logger.error("Mount source does not exist: %s", source)
-                raise ContainerError(f"Mount source directory does not exist: {source}")
-            logger.info("Mount source OK: %s (exists=%s, is_dir=%s)",
-                        source, source.exists(), source.is_dir())
-
         mounts = []
         for vm in spec.mounts:
             source_path = str(vm.source)
+            container_source = Path(vm.source)
             is_volume = False
             volume_name = None
             fs_path = None
+
+            # First, ensure directory exists in container (will be reflected on host via volume)
+            # This is important for subpaths within volumes
+            if not container_source.exists():
+                logger.info("Creating mount source directory in container: %s", container_source)
+                try:
+                    container_source.mkdir(parents=True, exist_ok=True)
+                    logger.info("Created mount source directory: %s", container_source)
+                except Exception as exc:
+                    logger.warning("Could not create mount source directory %s: %s", container_source, exc)
+                    # Continue anyway - might be a volume mount
 
             # Translate container path to host path/volume if needed
             # This handles podman-in-podman where host Podman needs host paths
@@ -523,7 +524,25 @@ class PodmanManager(ContainerManager):
                     "target": str(vm.target),
                     "read_only": bool(vm.read_only),
                 }
+                logger.info("Volume mount: %s -> %s", source_path, vm.target)
             else:
+                # Bind mount - validate and create directory if needed
+                host_source = Path(source_path)
+                logger.info("Checking bind mount source: %s -> %s", source_path, vm.target)
+
+                if not host_source.exists():
+                    logger.info("Bind mount source does not exist, creating: %s", host_source)
+                    try:
+                        host_source.mkdir(parents=True, exist_ok=True)
+                        logger.info("Created bind mount directory: %s", host_source)
+                    except Exception as exc:
+                        logger.error("Failed to create bind mount directory %s: %s", host_source, exc)
+                        raise ContainerError(f"Cannot create bind mount directory: {host_source}", cause=exc)
+
+                if not host_source.is_dir():
+                    logger.error("Bind mount source is not a directory: %s", host_source)
+                    raise ContainerError(f"Bind mount source is not a directory: {host_source}")
+
                 mount_dict = {
                     "type": "bind",
                     "source": source_path,
@@ -534,6 +553,9 @@ class PodmanManager(ContainerManager):
                 selinux_opts = self._mount_options(vm)
                 if selinux_opts:
                     mount_dict["relabel"] = selinux_opts[0]  # "Z" or "z"
+
+                logger.info("Bind mount validated: %s (exists=%s, is_dir=%s)",
+                           host_source, host_source.exists(), host_source.is_dir())
 
             mounts.append(mount_dict)
             logger.debug("Mount dict: %s", mount_dict)
