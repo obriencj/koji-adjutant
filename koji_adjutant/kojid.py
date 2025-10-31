@@ -7348,90 +7348,6 @@ def quit(msg=None, code=1):
     sys.exit(code)
 
 
-if __name__ == "__main__":
-    koji.add_file_logger("koji", "/var/log/kojid.log")
-    # note we're setting logging params for all of koji*
-    options = get_options()
-    if options.log_level:
-        lvl = getattr(logging, options.log_level, None)
-        if lvl is None:
-            quit("Invalid log level: %s" % options.log_level)
-        logging.getLogger("koji").setLevel(lvl)
-    else:
-        logging.getLogger("koji").setLevel(logging.WARN)
-    if options.debug:
-        logging.getLogger("koji").setLevel(logging.DEBUG)
-    elif options.verbose:
-        logging.getLogger("koji").setLevel(logging.INFO)
-    if options.debug_task:
-        logging.getLogger("koji.build.BaseTaskHandler").setLevel(logging.DEBUG)
-    if options.admin_emails:
-        koji.add_mail_logger("koji", options.admin_emails)
-
-    # start a session and login
-    session_opts = koji.grab_session_options(options)
-    glob_session = koji.ClientSession(options.server, session_opts)
-    if options.cert and os.path.isfile(options.cert):
-        try:
-            # authenticate using SSL client certificates
-            glob_session.ssl_login(options.cert, None, options.serverca)
-        except koji.AuthError as e:
-            quit("Error: Unable to log in: %s" % e)
-        except requests.exceptions.ConnectionError:
-            quit("Error: Unable to connect to server %s" % (options.server))
-    elif options.user:
-        try:
-            # authenticate using user/password
-            glob_session.login()
-        except koji.AuthError:
-            quit("Error: Unable to log in. Bad credentials?")
-        except requests.exceptions.ConnectionError:
-            quit("Error: Unable to connect to server %s" % (options.server))
-    elif reqgssapi:
-        krb_principal = options.krb_principal
-        if krb_principal is None:
-            krb_principal = options.host_principal_format % socket.getfqdn()
-        try:
-            # Check ccache is not empty or authentication will fail
-            if os.path.exists(options.ccache) and os.stat(options.ccache).st_size == 0:
-                os.remove(options.ccache)
-
-            glob_session.gssapi_login(principal=krb_principal,
-                                      keytab=options.keytab,
-                                      ccache=options.ccache)
-        except Krb5Error as e:
-            quit("Kerberos authentication failed: %s" % e.args)
-        except socket.error as e:
-            quit("Could not connect to Kerberos authentication service: '%s'" % e.args[1])
-    else:
-        quit("No username/password/certificate supplied and Kerberos missing or not configured")
-    # make session exclusive
-    try:
-        glob_session.exclusiveSession(force=options.force_lock)
-    except koji.AuthLockError:
-        quit("Error: Unable to get lock. Trying using --force-lock")
-    if not glob_session.logged_in:
-        quit("Error: Unknown login error")
-    # make sure it works
-    try:
-        ret = glob_session.echo("OK")
-    except requests.exceptions.ConnectionError:
-        quit("Error: Unable to connect to server %s" % (options.server))
-    if ret != ["OK"]:
-        quit("Error: incorrect server response: %r" % (ret))
-
-    # run main
-    if options.daemon:
-        # detach
-        koji.daemonize()
-        main(options, glob_session)
-        # not reached
-        assert False  # pragma: no cover
-    elif not options.skip_main:
-        koji.add_stderr_logger("koji")
-        main(options, glob_session)
-
-
 def main_entrypoint():
     """Entry point wrapper for console_scripts.
 
@@ -7521,6 +7437,13 @@ def main_entrypoint():
     if ret != ["OK"]:
         quit("Error: incorrect server response: %r" % (ret))
 
+    # Initialize config module before running main
+    try:
+        from koji_adjutant import config as adj_config
+        adj_config.initialize(options)
+    except ImportError:
+        pass  # Config module not available
+
     # Run main
     if options.daemon:
         # Detach and run as daemon
@@ -7532,3 +7455,11 @@ def main_entrypoint():
         # Foreground mode with stderr logging
         koji.add_stderr_logger("koji")
         main(options, glob_session)
+
+
+
+if __name__ == "__main__":
+    main_entrypoint()
+
+
+# The end.

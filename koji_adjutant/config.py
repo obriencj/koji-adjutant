@@ -19,6 +19,21 @@ logger = logging.getLogger(__name__)
 
 # Module-level config cache
 _config: Optional[Dict[str, Any]] = None
+_options: Optional[Any] = None  # Kojid options object (initialized by kojid main)
+
+
+def initialize(options: Any) -> None:
+    """Initialize config module with kojid options object.
+
+    This should be called once at kojid startup with the parsed options object.
+    Avoids duplicate config file parsing.
+
+    Args:
+        options: Parsed options object from kojid get_options()
+    """
+    global _options
+    _options = options
+    logger.debug("Config module initialized with kojid options object")
 
 
 def _parse_config_file(config_file: Optional[str] = None) -> Dict[str, Any]:
@@ -41,8 +56,9 @@ def _parse_config_file(config_file: Optional[str] = None) -> Dict[str, Any]:
         if config_file:
             config_dict = koji.read_config_files([config_file])
         else:
-            # Use koji's default config file locations
-            config_dict = koji.read_config_files()
+            # Use koji's default config file locations for kojid
+            # Standard locations: /etc/kojid/kojid.conf
+            config_dict = koji.read_config_files(['/etc/kojid/kojid.conf'])
     except Exception as exc:
         logger.warning("Failed to parse config file: %s", exc)
         return {}
@@ -95,7 +111,7 @@ def _get_config_value(
     Returns:
         Config value (converted if converter provided)
     """
-    # Check environment variable first
+    # Check environment variable first (highest priority)
     if env_var:
         env_value = os.environ.get(env_var)
         if env_value is not None:
@@ -108,7 +124,19 @@ def _get_config_value(
                     )
             return env_value
 
-    # Check config file
+    # Check options object (if initialized by kojid)
+    if _options is not None:
+        option_key = f"adjutant_{key}"
+        if hasattr(_options, option_key):
+            value = getattr(_options, option_key)
+            if converter and isinstance(value, str):
+                try:
+                    return converter(value)
+                except (ValueError, TypeError) as exc:
+                    logger.warning("Invalid value for %s: %s, using default", key, value)
+            return value
+
+    # Check config file (fallback for standalone usage)
     config = _get_config()
     value = config.get(key)
     if value is not None:
