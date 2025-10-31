@@ -1773,7 +1773,10 @@ class BuildArchTask(BaseBuildTask):
             koji_mount_root = Path(self.options.topdir)
 
             # Ensure work directory exists (usually done by BaseTaskHandler.createWorkdir)
+            self.logger.info("Creating work directory: %s (topdir=%s)", work_dir, koji_mount_root)
             work_dir.mkdir(parents=True, exist_ok=True)
+            self.logger.info("Work directory created: exists=%s, is_dir=%s",
+                           work_dir.exists(), work_dir.is_dir())
 
             ctx = TaskContext(
                 task_id=self.id,

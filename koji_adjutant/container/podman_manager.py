@@ -454,17 +454,34 @@ class PodmanManager(ContainerManager):
 
     def _create_container(self, spec: ContainerSpec) -> str:
         assert self._client is not None
-        mounts = [
-            {
-                "Type": "bind",
-                "Source": str(vm.source),
-                "Destination": str(vm.target),
-                "ReadOnly": bool(vm.read_only),
-                # Options are used by podman to carry SELinux label flags
-                "Options": self._mount_options(vm),
+
+        # Validate mount sources exist before creating container
+        logger.info("Validating %d mount source(s) before container creation", len(spec.mounts))
+        for vm in spec.mounts:
+            source = Path(vm.source)
+            logger.info("Checking mount: %s -> %s (ro=%s)", source, vm.target, vm.read_only)
+            if not source.exists():
+                logger.error("Mount source does not exist: %s", source)
+                raise ContainerError(f"Mount source directory does not exist: {source}")
+            logger.info("Mount source OK: %s (exists=%s, is_dir=%s)",
+                        source, source.exists(), source.is_dir())
+
+        mounts = []
+        for vm in spec.mounts:
+            mount_dict = {
+                "type": "bind",
+                "source": str(vm.source),
+                "target": str(vm.target),
+                "read_only": bool(vm.read_only),
             }
-            for vm in spec.mounts
-        ]
+            # Add SELinux relabel if specified
+            selinux_opts = self._mount_options(vm)
+            if selinux_opts:
+                mount_dict["relabel"] = selinux_opts[0]  # "Z" or "z"
+            mounts.append(mount_dict)
+            logger.debug("Mount dict: %s", mount_dict)
+
+        logger.info("Created %d mount specifications for Podman", len(mounts))
 
         labels = dict(self._base_labels)
         # Task label inferred from environment if available
