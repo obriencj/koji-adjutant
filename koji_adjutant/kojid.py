@@ -1757,7 +1757,7 @@ class BuildArchTask(BaseBuildTask):
         else:
             # Use container-based adapter
             self.logger.debug("Using container-based build execution")
-            
+
             # Extract task parameters for adapter
             task_params = {
                 'pkg': pkg,
@@ -1766,7 +1766,7 @@ class BuildArchTask(BaseBuildTask):
                 'keep_srpm': keep_srpm,
                 'opts': opts,
             }
-            
+
             # Create TaskContext
             # work_dir should be /mnt/koji/work/<task_id>
             work_dir = Path(self.workdir)
@@ -1777,27 +1777,27 @@ class BuildArchTask(BaseBuildTask):
                 koji_mount_root=koji_mount_root,
                 environment={},
             )
-            
+
             # Initialize PodmanManager and log sink
             manager = PodmanManager()
             log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
             sink = FileKojiLogSink(self.logger, log_file_path)
-            
+
             try:
                 # Run adapter
                 adapter = BuildArchAdapter()
                 exit_code, adapter_result = adapter.run(ctx, manager, sink, task_params)
-                
+
                 if exit_code != 0:
                     raise koji.BuildError("Container build failed with exit code %d" % exit_code)
-                
+
                 # Extract results from adapter (paths are relative to upload base)
                 # Adapter returns: {rpms: [paths], srpms: [paths], logs: [paths], brootid: int}
                 rpm_paths = adapter_result.get('rpms', [])
                 srpm_paths = adapter_result.get('srpms', [])
                 log_paths = adapter_result.get('logs', [])
                 brootid = adapter_result.get('brootid', self.id)
-                
+
                 # Extract filenames for processing
                 # resultdir as string for compatibility with os.path.join
                 resultdir = str(work_dir / 'result')
@@ -1805,24 +1805,24 @@ class BuildArchTask(BaseBuildTask):
                 srpm_files = []
                 log_files = []
                 unexpected = []
-                
+
                 # Parse paths from adapter (format: work/<task_id>/result/filename)
                 for path in rpm_paths:
                     # path is like "work/<task_id>/result/file.rpm"
                     filename = os.path.basename(path)
                     rpm_files.append(filename)
-                
+
                 for path in srpm_paths:
                     filename = os.path.basename(path)
                     srpm_files.append(filename)
-                
+
                 for path in log_paths:
                     filename = os.path.basename(path)
                     log_files.append(filename)
-                
+
                 # Construct uploadpath (matching BuildRoot format)
                 uploadpath = "work/%d/result" % self.id
-                
+
             finally:
                 # Ensure log sink is closed
                 sink.close()
@@ -5415,14 +5415,14 @@ class RebuildSRPM(BaseBuildTask):
         else:
             # Use container-based adapter
             self.logger.debug("Using container-based SRPM rebuild execution")
-            
+
             # Extract task parameters for adapter
             task_params = {
                 'srpm': srpm,
                 'build_tag': build_tag_info['name'],
                 'opts': opts,
             }
-            
+
             # Create TaskContext
             # work_dir should be /mnt/koji/work/<task_id>
             work_dir = Path(self.workdir)
@@ -5433,34 +5433,34 @@ class RebuildSRPM(BaseBuildTask):
                 koji_mount_root=koji_mount_root,
                 environment={},
             )
-            
+
             # Initialize PodmanManager and log sink
             manager = PodmanManager()
             log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
             sink = FileKojiLogSink(self.logger, log_file_path)
-            
+
             try:
                 # Run adapter
                 adapter = RebuildSRPMAdapter()
                 exit_code, adapter_result = adapter.run(ctx, manager, sink, task_params, session=self.session, event_id=event_id)
-                
+
                 if exit_code != 0:
                     raise koji.BuildError("Container SRPM rebuild failed with exit code %d" % exit_code)
-                
+
                 # Extract results from adapter
                 # Adapter returns: {srpm: path, logs: [paths], brootid: int, source: dict}
                 srpm_path = adapter_result.get('srpm', '')
                 log_paths = adapter_result.get('logs', [])
                 brootid = adapter_result.get('brootid', self.id)
                 source_info = adapter_result.get('source', {})
-                
+
                 # Extract filenames for processing
                 uploadpath = self.getUploadDir()
-                
+
                 # Parse paths from adapter (format: work/<task_id>/result/filename)
                 srpm_filename = os.path.basename(srpm_path) if srpm_path else ""
                 log_files = [os.path.basename(path) for path in log_paths]
-                
+
                 # Upload SRPM if found
                 if srpm_path:
                     # Convert relative path to absolute
@@ -5468,25 +5468,25 @@ class RebuildSRPM(BaseBuildTask):
                         srpm_full_path = os.path.join(work_dir, srpm_path)
                     else:
                         srpm_full_path = os.path.join(work_dir, 'result', srpm_filename)
-                    
+
                     if os.path.exists(srpm_full_path):
                         self.uploadFile(srpm_full_path)
                     else:
                         raise koji.BuildError("Rebuilt SRPM file not found: %s" % srpm_full_path)
-                
+
                 # Upload log files
                 for log_file in log_files:
                     log_full_path = os.path.join(work_dir, 'result', log_file)
                     if os.path.exists(log_full_path):
                         self.uploadFile(log_full_path)
-                
+
                 return {
                     'srpm': "%s/%s" % (uploadpath, srpm_filename) if srpm_filename else "",
                     'logs': ["%s/%s" % (uploadpath, f) for f in log_files],
                     'brootid': brootid,
                     'source': source_info,
                 }
-                
+
             finally:
                 # Ensure log sink is closed
                 sink.close()
@@ -5536,7 +5536,7 @@ class BuildSRPMFromSCMTask(BaseBuildTask):
         repo_info = self.session.repoInfo(repo_id, strict=True)
         event_id = repo_info['create_event']
         build_tag_info = self.session.getTag(build_tag, strict=True, event=event_id)
-        
+
         # Check if adjutant adapters are available
         if BuildSRPMFromSCMAdapter is None or PodmanManager is None or FileKojiLogSink is None:
             # Fallback to original BuildRoot-based execution
@@ -5663,14 +5663,14 @@ class BuildSRPMFromSCMTask(BaseBuildTask):
         else:
             # Use container-based adapter
             self.logger.debug("Using container-based SRPM build from SCM execution")
-            
+
             # Extract task parameters for adapter
             task_params = {
                 'url': url,
                 'build_tag': build_tag_info['name'],
                 'opts': opts,
             }
-            
+
             # Create TaskContext
             # work_dir should be /mnt/koji/work/<task_id>
             work_dir = Path(self.workdir)
@@ -5681,34 +5681,34 @@ class BuildSRPMFromSCMTask(BaseBuildTask):
                 koji_mount_root=koji_mount_root,
                 environment={},
             )
-            
+
             # Initialize PodmanManager and log sink
             manager = PodmanManager()
             log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
             sink = FileKojiLogSink(self.logger, log_file_path)
-            
+
             try:
                 # Run adapter
                 adapter = BuildSRPMFromSCMAdapter()
                 exit_code, adapter_result = adapter.run(ctx, manager, sink, task_params, session=self.session, event_id=event_id)
-                
+
                 if exit_code != 0:
                     raise koji.BuildError("Container SRPM build from SCM failed with exit code %d" % exit_code)
-                
+
                 # Extract results from adapter
                 # Adapter returns: {srpm: path, logs: [paths], brootid: int, source: dict}
                 srpm_path = adapter_result.get('srpm', '')
                 log_paths = adapter_result.get('logs', [])
                 brootid = adapter_result.get('brootid', self.id)
                 source_info = adapter_result.get('source', {})
-                
+
                 # Extract filenames for processing
                 uploadpath = self.getUploadDir()
-                
+
                 # Parse paths from adapter (format: work/<task_id>/result/filename)
                 srpm_filename = os.path.basename(srpm_path) if srpm_path else ""
                 log_files = [os.path.basename(path) for path in log_paths]
-                
+
                 # Upload SRPM if found
                 if srpm_path:
                     # Convert relative path to absolute
@@ -5716,25 +5716,25 @@ class BuildSRPMFromSCMTask(BaseBuildTask):
                         srpm_full_path = os.path.join(work_dir, srpm_path)
                     else:
                         srpm_full_path = os.path.join(work_dir, 'result', srpm_filename)
-                    
+
                     if os.path.exists(srpm_full_path):
                         self.uploadFile(srpm_full_path)
                     else:
                         raise koji.BuildError("Built SRPM file not found: %s" % srpm_full_path)
-                
+
                 # Upload log files
                 for log_file in log_files:
                     log_full_path = os.path.join(work_dir, 'result', log_file)
                     if os.path.exists(log_full_path):
                         self.uploadFile(log_full_path)
-                
+
                 return {
                     'srpm': "%s/%s" % (uploadpath, srpm_filename) if srpm_filename else "",
                     'logs': ["%s/%s" % (uploadpath, f) for f in log_files],
                     'brootid': brootid,
                     'source': source_info,
                 }
-                
+
             finally:
                 # Ensure log sink is closed
                 sink.close()
@@ -6307,7 +6307,7 @@ class CreaterepoTask(BaseTaskHandler):
         pkglist = os.path.join(self.repodir, 'pkglist')
         if os.path.getsize(pkglist) == 0:
             pkglist = None
-        
+
         # Check if adjutant adapters are available
         if CreaterepoAdapter is None or PodmanManager is None or FileKojiLogSink is None:
             # Fallback to original host-based execution
@@ -6315,10 +6315,10 @@ class CreaterepoTask(BaseTaskHandler):
         else:
             # Use container-based adapter
             self.logger.debug("Using container-based createrepo execution")
-            
+
             # Ensure output directory exists
             koji.ensuredir(self.outdir)
-            
+
             # Handle oldrepo repodata copying (must be done on host before container)
             oldrepodata = None
             if pkglist and oldrepo and self.options.createrepo_update:
@@ -6335,7 +6335,7 @@ class CreaterepoTask(BaseTaskHandler):
                         # to rewrite it (if we have external repos to merge)
                         os.unlink(oldorigins)
                     oldrepodata = self.datadir
-            
+
             # Extract task parameters for adapter
             task_params = {
                 'repo_id': repo_id,
@@ -6348,7 +6348,7 @@ class CreaterepoTask(BaseTaskHandler):
                 'createrepo_update': self.options.createrepo_update if (pkglist and oldrepo) else False,
                 'createrepo_skip_stat': self.options.createrepo_skip_stat,
             }
-            
+
             # Create TaskContext
             work_dir = Path(self.workdir)
             koji_mount_root = Path(self.options.topdir)
@@ -6358,28 +6358,28 @@ class CreaterepoTask(BaseTaskHandler):
                 koji_mount_root=koji_mount_root,
                 environment={},
             )
-            
+
             # Initialize PodmanManager and log sink
             manager = PodmanManager()
             log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
             sink = FileKojiLogSink(self.logger, log_file_path)
-            
+
             try:
                 # Run adapter
                 adapter = CreaterepoAdapter()
                 exit_code, adapter_result = adapter.run(ctx, manager, sink, task_params)
-                
+
                 if exit_code != 0:
                     raise koji.GenericError("Container createrepo failed with exit code %d" % exit_code)
-                
+
                 # Adapter returns [uploadpath, files] matching kojid format
                 # For now, we'll use the result from adapter, but we still need to
                 # handle uploads ourselves to match the original handler pattern
                 adapter_uploadpath, adapter_files = adapter_result
-                
+
                 # Note: adapter files may be different from what we collect below,
                 # but we'll collect from self.datadir to match original behavior
-                
+
             finally:
                 # Ensure log sink is closed
                 sink.close()
@@ -7411,5 +7411,107 @@ if __name__ == "__main__":
         # not reached
         assert False  # pragma: no cover
     elif not options.skip_main:
+        koji.add_stderr_logger("koji")
+        main(options, glob_session)
+
+
+def main_entrypoint():
+    """Entry point wrapper for console_scripts.
+
+    This wrapper enables koji-adjutant to be installed as a package
+    with kojid as a console script entry point.
+
+    Usage:
+        After installing koji-adjutant:
+        $ kojid --help
+        $ kojid --fg --verbose
+    """
+    # Setup logging
+    koji.add_file_logger("koji", "/var/log/kojid.log")
+
+    # Parse command-line options
+    options = get_options()
+
+    # Configure logging levels
+    if options.log_level:
+        lvl = getattr(logging, options.log_level, None)
+        if lvl is None:
+            quit("Invalid log level: %s" % options.log_level)
+        logging.getLogger("koji").setLevel(lvl)
+    else:
+        logging.getLogger("koji").setLevel(logging.WARN)
+    if options.debug:
+        logging.getLogger("koji").setLevel(logging.DEBUG)
+    elif options.verbose:
+        logging.getLogger("koji").setLevel(logging.INFO)
+    if options.debug_task:
+        logging.getLogger("koji.build.BaseTaskHandler").setLevel(logging.DEBUG)
+    if options.admin_emails:
+        koji.add_mail_logger("koji", options.admin_emails)
+
+    # Create session and authenticate
+    session_opts = koji.grab_session_options(options)
+    glob_session = koji.ClientSession(options.server, session_opts)
+
+    if options.cert and os.path.isfile(options.cert):
+        try:
+            # authenticate using SSL client certificates
+            glob_session.ssl_login(options.cert, None, options.serverca)
+        except koji.AuthError as e:
+            quit("Error: Unable to log in: %s" % e)
+        except requests.exceptions.ConnectionError:
+            quit("Error: Unable to connect to server %s" % (options.server))
+    elif options.user:
+        try:
+            # authenticate using user/password
+            glob_session.login()
+        except koji.AuthError:
+            quit("Error: Unable to log in. Bad credentials?")
+        except requests.exceptions.ConnectionError:
+            quit("Error: Unable to connect to server %s" % (options.server))
+    elif reqgssapi:
+        krb_principal = options.krb_principal
+        if krb_principal is None:
+            krb_principal = options.host_principal_format % socket.getfqdn()
+        try:
+            # Check ccache is not empty or authentication will fail
+            if os.path.exists(options.ccache) and os.stat(options.ccache).st_size == 0:
+                os.remove(options.ccache)
+
+            glob_session.gssapi_login(principal=krb_principal,
+                                      keytab=options.keytab,
+                                      ccache=options.ccache)
+        except Krb5Error as e:
+            quit("Kerberos authentication failed: %s" % e.args)
+        except socket.error as e:
+            quit("Could not connect to Kerberos authentication service: '%s'" % e.args[1])
+    else:
+        quit("No username/password/certificate supplied and Kerberos missing or not configured")
+
+    # Get exclusive session lock
+    try:
+        glob_session.exclusiveSession(force=options.force_lock)
+    except koji.AuthLockError:
+        quit("Error: Unable to get lock. Try using --force-lock")
+    if not glob_session.logged_in:
+        quit("Error: Unknown login error")
+
+    # Verify server connection
+    try:
+        ret = glob_session.echo("OK")
+    except requests.exceptions.ConnectionError:
+        quit("Error: Unable to connect to server %s" % (options.server))
+    if ret != ["OK"]:
+        quit("Error: incorrect server response: %r" % (ret))
+
+    # Run main
+    if options.daemon:
+        # Detach and run as daemon
+        koji.daemonize()
+        main(options, glob_session)
+        # not reached
+        assert False  # pragma: no cover
+    elif not options.skip_main:
+        # Foreground mode with stderr logging
         koji.add_stderr_logger("koji")
         main(options, glob_session)
