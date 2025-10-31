@@ -364,6 +364,66 @@ def adjutant_podman_socket() -> str:
     )
 
 
+def adjutant_host_mount_map() -> Dict[str, str]:
+    """Get container-to-host mount path mappings for podman-in-podman.
+
+    When running inside a container that uses host Podman socket, we need to
+    translate container paths to host paths for volume mounts.
+
+    Returns dict like: {"/mnt/koji": "/host/path/to/koji"}
+    """
+    # Check environment variable first (manual override)
+    env_map = os.environ.get("KOJI_ADJUTANT_HOST_MOUNT_MAP")
+    if env_map:
+        # Format: "/mnt/koji:/host/koji,/other:/host/other"
+        result = {}
+        for pair in env_map.split(","):
+            if ":" in pair:
+                container_path, host_path = pair.split(":", 1)
+                result[container_path.strip()] = host_path.strip()
+        return result
+
+    # Auto-detect from current container's mounts
+    return _introspect_container_mounts()
+
+
+def _introspect_container_mounts() -> Dict[str, str]:
+    """Auto-detect host mount paths by introspecting current container.
+
+    Returns dict mapping container paths to host paths.
+    """
+    mount_map = {}
+
+    try:
+        # Read /proc/self/mountinfo to find bind mounts
+        with open("/proc/self/mountinfo", "r") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) < 10:
+                    continue
+
+                # mountinfo format: [mount_id] [parent_id] [major:minor] [root] [mount_point] ...
+                mount_point = parts[4]  # Where it's mounted in container
+
+                # Look for optional fields separator
+                try:
+                    sep_idx = parts.index("-")
+                    fs_type = parts[sep_idx + 1]
+                    source = parts[sep_idx + 2] if len(parts) > sep_idx + 2 else None
+
+                    # Only map bind mounts
+                    if source and mount_point.startswith("/mnt"):
+                        mount_map[mount_point] = source
+                        logger.debug("Detected mount: %s -> %s", mount_point, source)
+                except (ValueError, IndexError):
+                    continue
+
+    except Exception as exc:
+        logger.warning("Failed to introspect container mounts: %s", exc)
+
+    return mount_map
+
+
 def reset_config() -> None:
     """Reset config cache (useful for testing)."""
     global _config, _options

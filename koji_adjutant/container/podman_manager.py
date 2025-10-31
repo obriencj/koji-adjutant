@@ -455,6 +455,11 @@ class PodmanManager(ContainerManager):
     def _create_container(self, spec: ContainerSpec) -> str:
         assert self._client is not None
 
+        # Get host mount mappings for podman-in-podman
+        host_mount_map = adj_config.adjutant_host_mount_map()
+        if host_mount_map:
+            logger.info("Using host mount mappings: %s", host_mount_map)
+
         # Validate mount sources exist before creating container
         logger.info("Validating %d mount source(s) before container creation", len(spec.mounts))
         for vm in spec.mounts:
@@ -468,9 +473,21 @@ class PodmanManager(ContainerManager):
 
         mounts = []
         for vm in spec.mounts:
+            source_path = str(vm.source)
+
+            # Translate container path to host path if needed
+            # This handles podman-in-podman where host Podman needs host paths
+            for container_path, host_path in host_mount_map.items():
+                if source_path.startswith(container_path):
+                    # Replace container mount prefix with host prefix
+                    translated = source_path.replace(container_path, host_path, 1)
+                    logger.info("Translated mount path: %s -> %s", source_path, translated)
+                    source_path = translated
+                    break
+
             mount_dict = {
                 "type": "bind",
-                "source": str(vm.source),
+                "source": source_path,
                 "target": str(vm.target),
                 "read_only": bool(vm.read_only),
             }
