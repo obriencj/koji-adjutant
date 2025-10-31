@@ -388,40 +388,82 @@ def adjutant_host_mount_map() -> Dict[str, str]:
 
 
 def _introspect_container_mounts() -> Dict[str, str]:
-    """Auto-detect host mount paths by introspecting current container.
+    """Auto-detect volume/mount info by introspecting current container.
 
-    Returns dict mapping container paths to host paths.
+    For named volumes, returns the volume name (e.g., "koji-boxed_koji_storage").
+    For bind mounts, returns the host path.
+
+    Returns dict mapping container paths to volume names or host paths.
     """
     mount_map = {}
 
     try:
-        # Read /proc/self/mountinfo to find bind mounts
+        # First try to get volume info from Podman/Docker inspect
+        # This requires access to the container runtime socket
+        volume_map = _get_volume_mounts_from_runtime()
+        if volume_map:
+            mount_map.update(volume_map)
+            logger.info("Got volume mounts from container runtime: %s", volume_map)
+            return mount_map
+    except Exception as exc:
+        logger.debug("Could not get volumes from runtime, falling back to mountinfo: %s", exc)
+
+    try:
+        # Fallback: Read /proc/self/mountinfo to find mounts
+        # Format: mountid parentid major:minor root mountpoint options - fstype source super_options
         with open("/proc/self/mountinfo", "r") as f:
             for line in f:
                 parts = line.split()
                 if len(parts) < 10:
                     continue
 
-                # mountinfo format: [mount_id] [parent_id] [major:minor] [root] [mount_point] ...
                 mount_point = parts[4]  # Where it's mounted in container
 
-                # Look for optional fields separator
+                # Look for optional fields separator "-"
                 try:
                     sep_idx = parts.index("-")
                     fs_type = parts[sep_idx + 1]
                     source = parts[sep_idx + 2] if len(parts) > sep_idx + 2 else None
 
-                    # Only map bind mounts
+                    # Map mounts under /mnt (includes both bind mounts and named volumes)
                     if source and mount_point.startswith("/mnt"):
-                        mount_map[mount_point] = source
-                        logger.debug("Detected mount: %s -> %s", mount_point, source)
+                        # Check if source looks like a volume path
+                        if "/volumes/" in source and "/_data" in source:
+                            # Extract volume name from path like:
+                            # /var/lib/docker/volumes/koji-boxed_koji_storage/_data
+                            volume_name = source.split("/volumes/")[1].split("/_data")[0]
+                            # Store both volume name and filesystem path
+                            # Format: "volume:name|path" for dual use
+                            mount_map[mount_point] = f"volume:{volume_name}|{source}"
+                            logger.info("Detected named volume: %s -> volume=%s path=%s",
+                                      mount_point, volume_name, source)
+                        else:
+                            # Regular bind mount
+                            mount_map[mount_point] = source
+                            logger.info("Detected bind mount: %s -> %s", mount_point, source)
                 except (ValueError, IndexError):
                     continue
 
     except Exception as exc:
         logger.warning("Failed to introspect container mounts: %s", exc)
 
+    if mount_map:
+        logger.info("Container mount map: %s", mount_map)
+    else:
+        logger.warning("No container mounts detected - podman-in-podman may fail")
+
     return mount_map
+
+
+def _get_volume_mounts_from_runtime() -> Dict[str, str]:
+    """Try to get volume information from container runtime.
+
+    Attempts to inspect the current container to find named volumes.
+    Returns dict mapping container paths to "volume:<name>" or host paths.
+    """
+    # This would require container ID and runtime access
+    # For now, return empty dict and rely on mountinfo parsing
+    return {}
 
 
 def reset_config() -> None:

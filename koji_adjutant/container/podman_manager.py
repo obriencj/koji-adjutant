@@ -474,27 +474,67 @@ class PodmanManager(ContainerManager):
         mounts = []
         for vm in spec.mounts:
             source_path = str(vm.source)
+            is_volume = False
+            volume_name = None
+            fs_path = None
 
-            # Translate container path to host path if needed
+            # Translate container path to host path/volume if needed
             # This handles podman-in-podman where host Podman needs host paths
-            for container_path, host_path in host_mount_map.items():
+            for container_path, mapped_source in host_mount_map.items():
                 if source_path.startswith(container_path):
-                    # Replace container mount prefix with host prefix
-                    translated = source_path.replace(container_path, host_path, 1)
-                    logger.info("Translated mount path: %s -> %s", source_path, translated)
-                    source_path = translated
+                    # Check if it's a named volume (format: "volume:name|/path")
+                    if mapped_source.startswith("volume:"):
+                        # Parse volume info
+                        volume_info = mapped_source[7:]  # Strip "volume:" prefix
+                        if "|" in volume_info:
+                            volume_name, fs_path = volume_info.split("|", 1)
+                        else:
+                            volume_name = volume_info
+                            fs_path = None
+
+                        # Check if mounting entire volume or subpath
+                        relative_path = source_path[len(container_path):].lstrip("/")
+                        if relative_path:
+                            # Subpath within volume - must use bind mount with filesystem path
+                            if fs_path:
+                                source_path = fs_path + "/" + relative_path
+                                logger.info("Translated volume subpath to bind: %s -> %s (subpath in volume %s)",
+                                          vm.source, source_path, volume_name)
+                            else:
+                                logger.warning("Need subpath but no filesystem path for volume %s", volume_name)
+                        else:
+                            # Mount entire volume - prefer volume mount
+                            is_volume = True
+                            source_path = volume_name
+                            logger.info("Using named volume mount: %s -> volume %s",
+                                      container_path, volume_name)
+                    else:
+                        # Regular bind mount - translate the path
+                        translated = source_path.replace(container_path, mapped_source, 1)
+                        logger.info("Translated bind mount: %s -> %s", source_path, translated)
+                        source_path = translated
                     break
 
-            mount_dict = {
-                "type": "bind",
-                "source": source_path,
-                "target": str(vm.target),
-                "read_only": bool(vm.read_only),
-            }
-            # Add SELinux relabel if specified
-            selinux_opts = self._mount_options(vm)
-            if selinux_opts:
-                mount_dict["relabel"] = selinux_opts[0]  # "Z" or "z"
+            # Create mount dict based on type
+            if is_volume and volume_name:
+                mount_dict = {
+                    "type": "volume",
+                    "source": source_path,  # volume name
+                    "target": str(vm.target),
+                    "read_only": bool(vm.read_only),
+                }
+            else:
+                mount_dict = {
+                    "type": "bind",
+                    "source": source_path,
+                    "target": str(vm.target),
+                    "read_only": bool(vm.read_only),
+                }
+                # Add SELinux relabel for bind mounts
+                selinux_opts = self._mount_options(vm)
+                if selinux_opts:
+                    mount_dict["relabel"] = selinux_opts[0]  # "Z" or "z"
+
             mounts.append(mount_dict)
             logger.debug("Mount dict: %s", mount_dict)
 
