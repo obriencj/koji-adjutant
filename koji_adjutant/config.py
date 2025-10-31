@@ -47,8 +47,20 @@ def _parse_config_file(config_file: Optional[str] = None) -> Dict[str, Any]:
         logger.warning("Failed to parse config file: %s", exc)
         return {}
 
-    # Extract [adjutant] section
+    # Extract [adjutant] section if it exists (custom section)
     adjutant_config = config_dict.get("adjutant", {})
+
+    # Also check [kojid] section for adjutant_ prefixed keys
+    # This allows adjutant settings in the main [kojid] section
+    kojid_config = config_dict.get("kojid", {})
+    for key, value in kojid_config.items():
+        if key.startswith("adjutant_"):
+            # Remove adjutant_ prefix and add to adjutant_config
+            # Only if not already in [adjutant] section (that takes precedence)
+            config_key = key[len("adjutant_"):]
+            if config_key not in adjutant_config:
+                adjutant_config[config_key] = value
+
     return adjutant_config
 
 
