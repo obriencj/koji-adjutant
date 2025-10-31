@@ -147,7 +147,8 @@ class TestGitHandler:
     
     def test_checkout_failure_checkout_commit(self):
         """Test git checkout failure on commit checkout."""
-        handler = GitHandler("git://example.com/repo.git#abc123")
+        # Use a commit hash that matches the 7-40 character requirement
+        handler = GitHandler("git://example.com/repo.git#abc1234")
         handle = ContainerHandle(container_id="test-container")
         mock_manager = MagicMock()
         mock_manager.exec.side_effect = [

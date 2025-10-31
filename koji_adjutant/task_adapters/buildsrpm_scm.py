@@ -200,6 +200,7 @@ class BuildSRPMFromSCMAdapter(BaseTaskAdapter):
         
         exit_code = 0
         handle = None
+        scm_metadata = None  # Initialize to avoid NameError if exception occurs before checkout
         
         try:
             # Generate initialization data

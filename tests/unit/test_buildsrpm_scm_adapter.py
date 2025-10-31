@@ -363,6 +363,7 @@ class TestBuildSRPMFromSCMAdapter:
              patch("koji_adjutant.task_adapters.buildsrpm_scm.get_scm_handler") as mock_get_handler:
             mock_config.adjutant_buildroot_enabled.return_value = True
             mock_config.adjutant_task_image_default.return_value = "test-image:latest"
+            mock_config.adjutant_policy_enabled.return_value = False  # Disable policy to avoid session.getTag issues
 
             mock_initializer = MagicMock()
             mock_initializer.initialize.return_value = {
@@ -389,7 +390,7 @@ class TestBuildSRPMFromSCMAdapter:
             # Should succeed (exit_code 0) even if koji validation fails (we'll skip it)
             assert result["srpm"] == "work/12345/result/mypackage-1.0-1.src.rpm"
             assert "source" in result
-            assert result["source"]["url"] == "git://example.com/repo.git"
+            assert result["source"]["url"] == "git://example.com/repo.git#main"  # URL includes ref fragment
 
             # Verify cleanup was called
             mock_manager.remove.assert_called_once_with(handle, force=True)

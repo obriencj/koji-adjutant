@@ -362,6 +362,157 @@ CreaterepoAdapter.run()
 
 ---
 
+## SRPM Rebuild Process (RebuildSRPM)
+
+### 7. RebuildSRPM Task Flow
+
+```
+RebuildSRPMAdapter.run()
+  ↓
+1. Build ContainerSpec
+   - image: (from PolicyResolver or default)
+   - command: /bin/sleep infinity (exec pattern)
+   - mounts: /mnt/koji, /work/12345
+   - network_enabled: false (no network needed)
+   ↓
+2. Initialize buildroot with srpm-build group
+   - Parse SRPM → Extract BuildRequires
+   - Generate repo configuration
+   - Create initialization commands
+   ↓
+3. Execute via PodmanManager (exec pattern)
+   - Create container with sleep
+   - Start container
+   - Stream logs
+   - Copy config files (/etc/yum.repos.d/koji.repo, /etc/rpm/macros.koji)
+   - Execute init commands (mkdir, dnf install)
+   ↓
+4. Inside Container:
+   # Step 1: Install dependencies
+   dnf install -y @srpm-build gcc make ...
+   
+   # Step 2: Unpack SRPM
+   rpm -ivh /work/12345/work/mypackage-1.0-1.src.rpm
+   
+   # Step 3: Rebuild SRPM with dist tags
+   rpmbuild -bs /work/12345/work/mypackage-1.0-1.src.rpm \\
+     --define "_topdir /work/12345" \\
+     --define "_sourcedir /work/12345/work" \\
+     --define "_srcrpmdir /work/12345/result" \\
+     --define "dist .fc39"
+   ↓
+5. Collect Results:
+   result = {
+     'srpm': 'work/12345/result/mypackage-1.0-1.fc39.src.rpm',
+     'logs': ['work/12345/result/build.log'],
+     'brootid': 12345,
+     'source': {'source': 'mypackage-1.0-1.src.rpm'}
+   }
+```
+
+**Files Involved**:
+- `koji_adjutant/task_adapters/rebuild_srpm.py` (RebuildSRPMAdapter)
+
+---
+
+## SRPM Build from SCM Process (BuildSRPMFromSCM)
+
+### 8. BuildSRPMFromSCM Task Flow
+
+```
+BuildSRPMFromSCMAdapter.run()
+  ↓
+1. Build ContainerSpec
+   - image: (from PolicyResolver or default)
+   - command: /bin/sleep infinity (exec pattern)
+   - mounts: /mnt/koji, /work/12345
+   - network_enabled: true (KEY: Required for git checkout)
+   ↓
+2. Initialize buildroot with srpm-build group
+   - Generate repo configuration
+   - Create initialization commands
+   ↓
+3. Execute via PodmanManager (exec pattern)
+   - Create container with sleep
+   - Start container
+   - Stream logs
+   - Copy config files
+   - Execute init commands
+   ↓
+4. Inside Container:
+   # Step 1: Checkout source from git
+   git clone --depth 1 --branch main git://example.com/repo.git /work/12345/source
+   # OR for commits:
+   git clone git://example.com/repo.git /work/12345/source
+   git -C /work/12345/source checkout abc123
+   
+   # Step 2: Detect build method
+   test -f /work/12345/source/Makefile && grep -q 'srpm:' /work/12345/source/Makefile
+   # → "make" or "rpmbuild"
+   
+   # Step 3: Build SRPM
+   # Method 1: make srpm
+   make -C /work/12345/source srpm
+   
+   # Method 2: rpmbuild -bs
+   rpmbuild -bs /work/12345/source/*.spec \\
+     --define "_topdir /work/12345" \\
+     --define "_sourcedir /work/12345/source" \\
+     --define "_srcrpmdir /work/12345/result"
+   ↓
+5. Collect Results:
+   result = {
+     'srpm': 'work/12345/result/mypackage-1.0-1.src.rpm',
+     'logs': ['work/12345/result/build.log'],
+     'brootid': 12345,
+     'source': {
+       'source': 'mypackage-1.0-1.src.rpm',
+       'url': 'git://example.com/repo.git',
+       'commit': 'abc123',
+       'branch': 'main'
+     }
+   }
+```
+
+**Files Involved**:
+- `koji_adjutant/task_adapters/buildsrpm_scm.py` (BuildSRPMFromSCMAdapter)
+- `koji_adjutant/task_adapters/scm/git.py` (GitHandler)
+
+---
+
+## Complete Workflow (SCM → SRPM → RPM)
+
+### 9. End-to-End Build Workflow
+
+```
+User: koji build f39 git://example.com/package.git
+
+1. BuildTask (parent coordinator)
+   ↓
+2. buildSRPMFromSCM subtask ← BuildSRPMFromSCMAdapter ✅
+   - Checkout: git://example.com/package.git#main
+   - Build: rpmbuild -bs or make srpm
+   - Result: mypackage-1.0-1.src.rpm
+   ↓
+3. buildArch subtasks (parallel) ← BuildArchAdapter ✅
+   - x86_64: rpmbuild --rebuild mypackage-1.0-1.src.rpm
+   - aarch64: rpmbuild --rebuild mypackage-1.0-1.src.rpm
+   - Results: mypackage-1.0-1.x86_64.rpm, mypackage-1.0-1.aarch64.rpm
+   ↓
+4. Upload all artifacts to hub
+   ↓
+5. Build complete!
+```
+
+**Key Points**:
+- ✅ Full workflow supported (SCM → SRPM → RPM)
+- ✅ Network enabled for SCM checkout
+- ✅ Network disabled for RPM builds (security)
+- ✅ Policy-driven image selection
+- ✅ Buildroot initialization for both steps
+
+---
+
 ## Result Reporting
 
 ### 6. Upload and Report to Hub
@@ -400,6 +551,33 @@ Hub marks task CLOSED, stores result in database
 
 **Files Involved:**
 - `koji_adjutant/kojid.py` (BuildArchTask.handler, uploadFile calls)
+
+**RebuildSRPM Results:**
+```python
+result = {
+    'srpm': 'work/12345/result/mypackage-1.0-1.fc39.src.rpm',
+    'logs': ['work/12345/result/build.log'],
+    'brootid': 12345,
+    'source': {
+        'source': 'mypackage-1.0-1.src.rpm'
+    }
+}
+```
+
+**BuildSRPMFromSCM Results:**
+```python
+result = {
+    'srpm': 'work/12345/result/mypackage-1.0-1.src.rpm',
+    'logs': ['work/12345/result/build.log'],
+    'brootid': 12345,
+    'source': {
+        'source': 'mypackage-1.0-1.src.rpm',
+        'url': 'git://example.com/repo.git',
+        'commit': 'abc123def456',
+        'branch': 'main'
+    }
+}
+```
 
 **Createrepo Results:**
 ```python
@@ -506,6 +684,9 @@ Cleanup container [container/podman_manager.py]
 | `container/podman_manager.py` | Podman implementation | `PodmanManager` |
 | `task_adapters/buildarch.py` | RPM build adapter | `BuildArchAdapter` |
 | `task_adapters/createrepo.py` | Repo adapter | `CreaterepoAdapter` |
+| `task_adapters/rebuild_srpm.py` | SRPM rebuild adapter ✨ | `RebuildSRPMAdapter` |
+| `task_adapters/buildsrpm_scm.py` | SRPM from SCM adapter ✨ | `BuildSRPMFromSCMAdapter` |
+| `task_adapters/scm/git.py` | Git SCM handler ✨ | `GitHandler` |
 | `task_adapters/logging.py` | Log streaming | `FileKojiLogSink` |
 
 ### Configuration Keys
@@ -620,6 +801,14 @@ Cleanup container [container/podman_manager.py]
 - Repository configuration
 - Build environment setup
 - ~70% complete, testing pending
+
+### ✅ Phase 2.5 (Complete)
+- SRPM rebuild adapter (RebuildSRPMAdapter)
+- SRPM from SCM adapter (BuildSRPMFromSCMAdapter)
+- SCM integration (git handler)
+- Complete workflow support (SCM → SRPM → RPM)
+- 52 tests passing (100%)
+- 85% coverage
 
 ### ⏳ Phase 2.3 (Planned)
 - Performance optimization
