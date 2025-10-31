@@ -476,7 +476,7 @@ class PodmanManager(ContainerManager):
             "image": spec.image,
             "command": list(spec.command),
             "environment": dict(spec.environment or {}),
-            "working_dir": str(spec.workdir) if spec.workdir else None,
+            "working_dir": str(spec.workdir) if spec.workdir else "/",
             "labels": labels,
             "tty": False,
             "stdin_open": False,

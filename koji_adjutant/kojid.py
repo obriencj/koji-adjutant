@@ -1771,6 +1771,10 @@ class BuildArchTask(BaseBuildTask):
             # work_dir should be /mnt/koji/work/<task_id>
             work_dir = Path(self.workdir)
             koji_mount_root = Path(self.options.topdir)
+
+            # Ensure work directory exists (usually done by BaseTaskHandler.createWorkdir)
+            work_dir.mkdir(parents=True, exist_ok=True)
+
             ctx = TaskContext(
                 task_id=self.id,
                 work_dir=work_dir,
@@ -1781,6 +1785,7 @@ class BuildArchTask(BaseBuildTask):
             # Initialize PodmanManager and log sink
             manager = PodmanManager()
             log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
+            log_file_path.parent.mkdir(parents=True, exist_ok=True)
             sink = FileKojiLogSink(self.logger, log_file_path)
 
             try:
@@ -5427,6 +5432,10 @@ class RebuildSRPM(BaseBuildTask):
             # work_dir should be /mnt/koji/work/<task_id>
             work_dir = Path(self.workdir)
             koji_mount_root = Path(self.options.topdir)
+
+            # Ensure work directory exists (usually done by BaseTaskHandler.createWorkdir)
+            work_dir.mkdir(parents=True, exist_ok=True)
+
             ctx = TaskContext(
                 task_id=self.id,
                 work_dir=work_dir,
@@ -5437,6 +5446,7 @@ class RebuildSRPM(BaseBuildTask):
             # Initialize PodmanManager and log sink
             manager = PodmanManager()
             log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
+            log_file_path.parent.mkdir(parents=True, exist_ok=True)
             sink = FileKojiLogSink(self.logger, log_file_path)
 
             try:
@@ -5675,6 +5685,10 @@ class BuildSRPMFromSCMTask(BaseBuildTask):
             # work_dir should be /mnt/koji/work/<task_id>
             work_dir = Path(self.workdir)
             koji_mount_root = Path(self.options.topdir)
+
+            # Ensure work directory exists (usually done by BaseTaskHandler.createWorkdir)
+            work_dir.mkdir(parents=True, exist_ok=True)
+
             ctx = TaskContext(
                 task_id=self.id,
                 work_dir=work_dir,
@@ -5685,6 +5699,7 @@ class BuildSRPMFromSCMTask(BaseBuildTask):
             # Initialize PodmanManager and log sink
             manager = PodmanManager()
             log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
+            log_file_path.parent.mkdir(parents=True, exist_ok=True)
             sink = FileKojiLogSink(self.logger, log_file_path)
 
             try:
@@ -6352,6 +6367,10 @@ class CreaterepoTask(BaseTaskHandler):
             # Create TaskContext
             work_dir = Path(self.workdir)
             koji_mount_root = Path(self.options.topdir)
+
+            # Ensure work directory exists (usually done by BaseTaskHandler.createWorkdir)
+            work_dir.mkdir(parents=True, exist_ok=True)
+
             ctx = TaskContext(
                 task_id=self.id,
                 work_dir=work_dir,
@@ -6362,6 +6381,7 @@ class CreaterepoTask(BaseTaskHandler):
             # Initialize PodmanManager and log sink
             manager = PodmanManager()
             log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
+            log_file_path.parent.mkdir(parents=True, exist_ok=True)
             sink = FileKojiLogSink(self.logger, log_file_path)
 
             try:
