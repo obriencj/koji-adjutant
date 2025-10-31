@@ -210,7 +210,7 @@ For simple work, prepare an inline prompt with same structure.
 Use cursor-agent CLI with heredoc:
 
 ```bash
-cursor-agent << 'EOF'
+cursor-agent agent << 'EOF'
 Acting as the <Personality Name> personality (from .cursor/rules/XXX_<filename>.mdc), <specific action>
 
 **Context**: <current state summary>

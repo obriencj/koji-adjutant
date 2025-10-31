@@ -136,12 +136,14 @@ try:
     from koji_adjutant.container.podman_manager import PodmanManager
     from koji_adjutant.task_adapters.buildarch import BuildArchAdapter
     from koji_adjutant.task_adapters.createrepo import CreaterepoAdapter
+    from koji_adjutant.task_adapters.rebuild_srpm import RebuildSRPMAdapter
     from koji_adjutant.task_adapters.logging import FileKojiLogSink
     from koji_adjutant.task_adapters.base import TaskContext
 except ImportError:
     # Fallback if adjutant modules not available
     BuildArchAdapter = None
     CreaterepoAdapter = None
+    RebuildSRPMAdapter = None
     FileKojiLogSink = None
     TaskContext = None
     PodmanManager = None
@@ -5341,70 +5343,151 @@ class RebuildSRPM(BaseBuildTask):
 
         repo_info = self.session.repoInfo(repo_id, strict=True)
         event_id = repo_info['create_event']
-        build_tag = self.session.getTag(build_tag, strict=True, event=event_id)
+        build_tag_info = self.session.getTag(build_tag, strict=True, event=event_id)
 
-        rootopts = {'install_group': 'srpm-build', 'repo_id': repo_id}
-        br_arch = self.find_arch('noarch', self.session.host.getHost(
-        ), self.session.getBuildConfig(build_tag['id'], event=event_id))
-        broot = BuildRoot(self.session, self.options,
-                          build_tag['id'], br_arch, self.id, **rootopts)
-        broot.workdir = self.workdir
+        # Check if adjutant adapters are available
+        if RebuildSRPMAdapter is None or PodmanManager is None or FileKojiLogSink is None:
+            # Fallback to original BuildRoot-based execution
+            rootopts = {'install_group': 'srpm-build', 'repo_id': repo_id}
+            br_arch = self.find_arch('noarch', self.session.host.getHost(
+            ), self.session.getBuildConfig(build_tag_info['id'], event=event_id))
+            broot = BuildRoot(self.session, self.options,
+                              build_tag_info['id'], br_arch, self.id, **rootopts)
+            broot.workdir = self.workdir
 
-        self.logger.debug("Initializing buildroot")
-        broot.init()
+            self.logger.debug("Initializing buildroot")
+            broot.init()
 
-        # Setup files and directories for SRPM rebuild
-        # We can't put this under the mock homedir because that directory
-        # is completely blown away and recreated on every mock invocation
-        srpmdir = broot.tmpdir() + '/srpm'
-        koji.ensuredir(srpmdir)
-        uploadpath = self.getUploadDir()
+            # Setup files and directories for SRPM rebuild
+            # We can't put this under the mock homedir because that directory
+            # is completely blown away and recreated on every mock invocation
+            srpmdir = broot.tmpdir() + '/srpm'
+            koji.ensuredir(srpmdir)
+            uploadpath = self.getUploadDir()
 
-        fn = self.localPath("work/%s" % srpm)
-        if not os.path.exists(fn):
-            raise koji.BuildError("Input SRPM file missing: %s" % fn)
-        shutil.copy(fn, srpmdir)
+            fn = self.localPath("work/%s" % srpm)
+            if not os.path.exists(fn):
+                raise koji.BuildError("Input SRPM file missing: %s" % fn)
+            shutil.copy(fn, srpmdir)
 
-        # rebuild srpm
-        self.logger.debug("Running srpm rebuild")
-        br_srpm_path = os.path.join(broot.path_without_to_within(srpmdir), os.path.basename(srpm))
-        broot.rebuild_srpm(br_srpm_path)
+            # rebuild srpm
+            self.logger.debug("Running srpm rebuild")
+            br_srpm_path = os.path.join(broot.path_without_to_within(srpmdir), os.path.basename(srpm))
+            broot.rebuild_srpm(br_srpm_path)
 
-        srpms = glob.glob('%s/*.src.rpm' % broot.resultdir())
-        if len(srpms) == 0:
-            raise koji.BuildError("No srpms found in %s" % srpmdir)
-        elif len(srpms) > 1:
-            raise koji.BuildError("Multiple srpms found in %s: %s" % (srpmdir, ", ".join(srpms)))
-        else:
-            srpm = srpms[0]
+            srpms = glob.glob('%s/*.src.rpm' % broot.resultdir())
+            if len(srpms) == 0:
+                raise koji.BuildError("No srpms found in %s" % srpmdir)
+            elif len(srpms) > 1:
+                raise koji.BuildError("Multiple srpms found in %s: %s" % (srpmdir, ", ".join(srpms)))
+            else:
+                srpm = srpms[0]
 
-        # check srpm name
-        h = koji.get_rpm_header(srpm)
-        name = koji.get_header_field(h, 'name')
-        version = koji.get_header_field(h, 'version')
-        release = koji.get_header_field(h, 'release')
-        srpm_name = "%(name)s-%(version)s-%(release)s.src.rpm" % locals()
-        if srpm_name != os.path.basename(srpm):
-            raise koji.BuildError('srpm name mismatch: %s != %s' %
-                                  (srpm_name, os.path.basename(srpm)))
+            # check srpm name
+            h = koji.get_rpm_header(srpm)
+            name = koji.get_header_field(h, 'name')
+            version = koji.get_header_field(h, 'version')
+            release = koji.get_header_field(h, 'release')
+            srpm_name = "%(name)s-%(version)s-%(release)s.src.rpm" % locals()
+            if srpm_name != os.path.basename(srpm):
+                raise koji.BuildError('srpm name mismatch: %s != %s' %
+                                      (srpm_name, os.path.basename(srpm)))
 
-        # upload srpm and return
-        self.uploadFile(srpm)
+            # upload srpm and return
+            self.uploadFile(srpm)
 
-        brootid = broot.id
-        log_files = list(broot.logs)
+            brootid = broot.id
+            log_files = list(broot.logs)
 
-        broot.expire()
+            broot.expire()
 
-        return {
-            'srpm': "%s/%s" % (uploadpath, srpm_name),
-            'logs': ["%s/%s" % (uploadpath, f) for f in log_files],
-            'brootid': brootid,
-            'source': {
-                'source': os.path.basename(srpm),
-                'url': os.path.basename(srpm),
+            return {
+                'srpm': "%s/%s" % (uploadpath, srpm_name),
+                'logs': ["%s/%s" % (uploadpath, f) for f in log_files],
+                'brootid': brootid,
+                'source': {
+                    'source': os.path.basename(srpm),
+                    'url': os.path.basename(srpm),
+                }
             }
-        }
+        else:
+            # Use container-based adapter
+            self.logger.debug("Using container-based SRPM rebuild execution")
+            
+            # Extract task parameters for adapter
+            task_params = {
+                'srpm': srpm,
+                'build_tag': build_tag_info['name'],
+                'opts': opts,
+            }
+            
+            # Create TaskContext
+            # work_dir should be /mnt/koji/work/<task_id>
+            work_dir = Path(self.workdir)
+            koji_mount_root = Path(self.options.topdir)
+            ctx = TaskContext(
+                task_id=self.id,
+                work_dir=work_dir,
+                koji_mount_root=koji_mount_root,
+                environment={},
+            )
+            
+            # Initialize PodmanManager and log sink
+            manager = PodmanManager()
+            log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
+            sink = FileKojiLogSink(self.logger, log_file_path)
+            
+            try:
+                # Run adapter
+                adapter = RebuildSRPMAdapter()
+                exit_code, adapter_result = adapter.run(ctx, manager, sink, task_params, session=self.session, event_id=event_id)
+                
+                if exit_code != 0:
+                    raise koji.BuildError("Container SRPM rebuild failed with exit code %d" % exit_code)
+                
+                # Extract results from adapter
+                # Adapter returns: {srpm: path, logs: [paths], brootid: int, source: dict}
+                srpm_path = adapter_result.get('srpm', '')
+                log_paths = adapter_result.get('logs', [])
+                brootid = adapter_result.get('brootid', self.id)
+                source_info = adapter_result.get('source', {})
+                
+                # Extract filenames for processing
+                uploadpath = self.getUploadDir()
+                
+                # Parse paths from adapter (format: work/<task_id>/result/filename)
+                srpm_filename = os.path.basename(srpm_path) if srpm_path else ""
+                log_files = [os.path.basename(path) for path in log_paths]
+                
+                # Upload SRPM if found
+                if srpm_path:
+                    # Convert relative path to absolute
+                    if srpm_path.startswith('work/'):
+                        srpm_full_path = os.path.join(work_dir, srpm_path)
+                    else:
+                        srpm_full_path = os.path.join(work_dir, 'result', srpm_filename)
+                    
+                    if os.path.exists(srpm_full_path):
+                        self.uploadFile(srpm_full_path)
+                    else:
+                        raise koji.BuildError("Rebuilt SRPM file not found: %s" % srpm_full_path)
+                
+                # Upload log files
+                for log_file in log_files:
+                    log_full_path = os.path.join(work_dir, 'result', log_file)
+                    if os.path.exists(log_full_path):
+                        self.uploadFile(log_full_path)
+                
+                return {
+                    'srpm': "%s/%s" % (uploadpath, srpm_filename) if srpm_filename else "",
+                    'logs': ["%s/%s" % (uploadpath, f) for f in log_files],
+                    'brootid': brootid,
+                    'source': source_info,
+                }
+                
+            finally:
+                # Ensure log sink is closed
+                sink.close()
 
 
 class BuildSRPMFromSCMTask(BaseBuildTask):

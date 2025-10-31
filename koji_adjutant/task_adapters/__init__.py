@@ -10,12 +10,14 @@ Boundary rules:
 from .base import BaseTaskAdapter, KojiLogSink, TaskContext, default_mounts
 from .buildarch import BuildArchAdapter
 from .createrepo import CreaterepoAdapter
+from .rebuild_srpm import RebuildSRPMAdapter
 from .logging import FileKojiLogSink
 
 __all__ = [
     "BaseTaskAdapter",
     "BuildArchAdapter",
     "CreaterepoAdapter",
+    "RebuildSRPMAdapter",
     "FileKojiLogSink",
     "KojiLogSink",
     "TaskContext",
