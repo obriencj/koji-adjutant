@@ -37,47 +37,22 @@ def initialize(options: Any) -> None:
 
 
 def _parse_config_file(config_file: Optional[str] = None) -> Dict[str, Any]:
-    """Parse kojid.conf file using koji library.
+    """Parse kojid.conf file using koji library (FALLBACK ONLY).
+
+    NOTE: This is now a fallback path. When kojid initializes config module
+    via initialize(options), settings come from the options object instead.
+    This fallback only runs if config module is used standalone (without kojid).
 
     Args:
-        config_file: Optional path to config file. If None, uses koji default.
+        config_file: Optional path to config file. If None, uses default.
 
     Returns:
-        Parsed config dict with [adjutant] section values.
+        Empty dict (settings come from options object when available)
     """
-    if koji is None:
-        logger.warning(
-            "koji library not available, using hardcoded defaults. "
-            "Install koji package for config file support."
-        )
-        return {}
-
-    try:
-        if config_file:
-            config_dict = koji.read_config_files([config_file])
-        else:
-            # Use koji's default config file locations for kojid
-            # Standard locations: /etc/kojid/kojid.conf
-            config_dict = koji.read_config_files(['/etc/kojid/kojid.conf'])
-    except Exception as exc:
-        logger.warning("Failed to parse config file: %s", exc)
-        return {}
-
-    # Extract [adjutant] section if it exists (custom section)
-    adjutant_config = config_dict.get("adjutant", {})
-
-    # Also check [kojid] section for adjutant_ prefixed keys
-    # This allows adjutant settings in the main [kojid] section
-    kojid_config = config_dict.get("kojid", {})
-    for key, value in kojid_config.items():
-        if key.startswith("adjutant_"):
-            # Remove adjutant_ prefix and add to adjutant_config
-            # Only if not already in [adjutant] section (that takes precedence)
-            config_key = key[len("adjutant_"):]
-            if config_key not in adjutant_config:
-                adjutant_config[config_key] = value
-
-    return adjutant_config
+    logger.debug("Using fallback config parsing (options object not initialized)")
+    # Return empty dict - when used with kojid, settings come from options object
+    # This avoids duplicate config parsing and the NoSectionError
+    return {}
 
 
 def _get_config() -> Dict[str, Any]:
@@ -377,5 +352,6 @@ def adjutant_monitoring_task_history_ttl() -> int:
 
 def reset_config() -> None:
     """Reset config cache (useful for testing)."""
-    global _config
+    global _config, _options
     _config = None
+    _options = None

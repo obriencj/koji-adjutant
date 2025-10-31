@@ -196,3 +196,240 @@ container_timeouts = pull=600,start=120,stop_grace=30
         # Without env var, config should be used
         monkeypatch.delenv("KOJI_ADJUTANT_TASK_IMAGE_DEFAULT", raising=False)
         assert adj_config.adjutant_task_image_default() == "config/image:tag"
+
+
+class TestConfigInitialization:
+    """Test config module initialization with options object."""
+
+    def test_initialize_stores_options_object(self, monkeypatch):
+        """Test config.initialize() stores options object."""
+        adj_config.reset_config()
+        monkeypatch.delenv("KOJI_ADJUTANT_TASK_IMAGE_DEFAULT", raising=False)
+
+        # Create mock options object with adjutant_* attributes
+        class MockOptions:
+            adjutant_task_image_default = "options/image:tag"
+            adjutant_image_pull_policy = "always"
+            adjutant_network_enabled = True
+            adjutant_policy_cache_ttl = 600
+
+        options = MockOptions()
+
+        # Initialize config module
+        adj_config.initialize(options)
+
+        # Verify _options is set by checking it affects config reads
+        assert adj_config.adjutant_task_image_default() == "options/image:tag"
+
+    def test_config_value_from_options_object(self, monkeypatch):
+        """Test reading config value from initialized options object."""
+        adj_config.reset_config()
+        monkeypatch.delenv("KOJI_ADJUTANT_TASK_IMAGE_DEFAULT", raising=False)
+
+        # Create mock options with various adjutant_* attributes
+        class MockOptions:
+            adjutant_task_image_default = "options/default:latest"
+            adjutant_image_pull_policy = "never"
+            adjutant_network_enabled = False
+            adjutant_policy_cache_ttl = 900
+            adjutant_buildroot_enabled = False
+
+        options = MockOptions()
+        adj_config.initialize(options)
+
+        # Verify values come from options object
+        assert adj_config.adjutant_task_image_default() == "options/default:latest"
+        assert adj_config.adjutant_image_pull_policy() == "never"
+        assert adj_config.adjutant_network_enabled() is False
+        assert adj_config.adjutant_policy_cache_ttl() == 900
+        assert adj_config.adjutant_buildroot_enabled() is False
+
+    def test_fallback_to_defaults_when_not_initialized(self, monkeypatch):
+        """Test fallback to defaults when options object not initialized."""
+        adj_config.reset_config()
+        monkeypatch.delenv("KOJI_ADJUTANT_TASK_IMAGE_DEFAULT", raising=False)
+        monkeypatch.delenv("KOJI_ADJUTANT_IMAGE_PULL_POLICY", raising=False)
+        monkeypatch.delenv("KOJI_ADJUTANT_NETWORK_ENABLED", raising=False)
+        monkeypatch.delenv("KOJI_ADJUTANT_POLICY_CACHE_TTL", raising=False)
+
+        # Ensure _options is None (not initialized)
+        adj_config.reset_config()
+
+        # Verify defaults are used
+        assert adj_config.adjutant_task_image_default() == "registry/almalinux:10"
+        assert adj_config.adjutant_image_pull_policy() == "if-not-present"
+        assert adj_config.adjutant_network_enabled() is True
+        assert adj_config.adjutant_policy_cache_ttl() == 300
+
+    def test_precedence_env_var_over_options(self, monkeypatch):
+        """Test env var takes precedence over options object."""
+        adj_config.reset_config()
+
+        # Create mock options with one value
+        class MockOptions:
+            adjutant_task_image_default = "options/image:tag"
+            adjutant_image_pull_policy = "never"
+            adjutant_network_enabled = False
+
+        options = MockOptions()
+        adj_config.initialize(options)
+
+        # Set env var with different value
+        monkeypatch.setenv("KOJI_ADJUTANT_TASK_IMAGE_DEFAULT", "env/image:tag")
+        monkeypatch.setenv("KOJI_ADJUTANT_IMAGE_PULL_POLICY", "always")
+        monkeypatch.setenv("KOJI_ADJUTANT_NETWORK_ENABLED", "true")
+
+        # Verify env var wins
+        assert adj_config.adjutant_task_image_default() == "env/image:tag"
+        assert adj_config.adjutant_image_pull_policy() == "always"
+        assert adj_config.adjutant_network_enabled() is True
+
+        # Remove env vars, verify options object values are used
+        monkeypatch.delenv("KOJI_ADJUTANT_TASK_IMAGE_DEFAULT", raising=False)
+        monkeypatch.delenv("KOJI_ADJUTANT_IMAGE_PULL_POLICY", raising=False)
+        monkeypatch.delenv("KOJI_ADJUTANT_NETWORK_ENABLED", raising=False)
+
+        assert adj_config.adjutant_task_image_default() == "options/image:tag"
+        assert adj_config.adjutant_image_pull_policy() == "never"
+        assert adj_config.adjutant_network_enabled() is False
+
+    def test_precedence_options_over_defaults(self, monkeypatch):
+        """Test options object takes precedence over defaults."""
+        adj_config.reset_config()
+        monkeypatch.delenv("KOJI_ADJUTANT_TASK_IMAGE_DEFAULT", raising=False)
+        monkeypatch.delenv("KOJI_ADJUTANT_IMAGE_PULL_POLICY", raising=False)
+
+        # Create mock options
+        class MockOptions:
+            adjutant_task_image_default = "custom/image:latest"
+            adjutant_image_pull_policy = "always"
+
+        options = MockOptions()
+        adj_config.initialize(options)
+
+        # Verify options object values are used (not defaults)
+        assert adj_config.adjutant_task_image_default() == "custom/image:latest"
+        assert adj_config.adjutant_image_pull_policy() == "always"
+
+    def test_options_with_string_type(self, monkeypatch):
+        """Test options object with string values."""
+        adj_config.reset_config()
+        monkeypatch.delenv("KOJI_ADJUTANT_TASK_IMAGE_DEFAULT", raising=False)
+        monkeypatch.delenv("KOJI_ADJUTANT_IMAGE_PULL_POLICY", raising=False)
+
+        class MockOptions:
+            adjutant_task_image_default = "registry/almalinux:10"
+            adjutant_image_pull_policy = "always"
+
+        options = MockOptions()
+        adj_config.initialize(options)
+
+        value = adj_config.adjutant_task_image_default()
+        assert isinstance(value, str)
+        assert value == "registry/almalinux:10"
+
+        value = adj_config.adjutant_image_pull_policy()
+        assert isinstance(value, str)
+        assert value == "always"
+
+    def test_options_with_bool_type(self, monkeypatch):
+        """Test options object with boolean values."""
+        adj_config.reset_config()
+        monkeypatch.delenv("KOJI_ADJUTANT_NETWORK_ENABLED", raising=False)
+        monkeypatch.delenv("KOJI_ADJUTANT_POLICY_ENABLED", raising=False)
+
+        # Test with actual bool values
+        class MockOptions:
+            adjutant_network_enabled = True
+            adjutant_policy_enabled = False
+
+        options = MockOptions()
+        adj_config.initialize(options)
+
+        assert isinstance(adj_config.adjutant_network_enabled(), bool)
+        assert adj_config.adjutant_network_enabled() is True
+        assert isinstance(adj_config.adjutant_policy_enabled(), bool)
+        assert adj_config.adjutant_policy_enabled() is False
+
+        # Test with string bool values (should be converted)
+        class MockOptionsStr:
+            adjutant_network_enabled = "true"
+            adjutant_policy_enabled = "false"
+
+        options_str = MockOptionsStr()
+        adj_config.initialize(options_str)
+
+        assert adj_config.adjutant_network_enabled() is True
+        assert adj_config.adjutant_policy_enabled() is False
+
+    def test_options_with_int_type(self, monkeypatch):
+        """Test options object with integer values."""
+        adj_config.reset_config()
+        monkeypatch.delenv("KOJI_ADJUTANT_POLICY_CACHE_TTL", raising=False)
+        monkeypatch.delenv("KOJI_ADJUTANT_MONITORING_CONTAINER_HISTORY_TTL", raising=False)
+
+        # Test with actual int values
+        class MockOptions:
+            adjutant_policy_cache_ttl = 600
+            adjutant_monitoring_container_history_ttl = 7200
+
+        options = MockOptions()
+        adj_config.initialize(options)
+
+        value = adj_config.adjutant_policy_cache_ttl()
+        assert isinstance(value, int)
+        assert value == 600
+
+        value = adj_config.adjutant_monitoring_container_history_ttl()
+        assert isinstance(value, int)
+        assert value == 7200
+
+        # Test with string int values (should be converted)
+        class MockOptionsStr:
+            adjutant_policy_cache_ttl = "900"
+            adjutant_monitoring_container_history_ttl = "3600"
+
+        options_str = MockOptionsStr()
+        adj_config.initialize(options_str)
+
+        assert adj_config.adjutant_policy_cache_ttl() == 900
+        assert adj_config.adjutant_monitoring_container_history_ttl() == 3600
+
+    def test_options_missing_attribute_falls_back(self, monkeypatch):
+        """Test that missing attributes in options object fall back to defaults."""
+        adj_config.reset_config()
+        monkeypatch.delenv("KOJI_ADJUTANT_TASK_IMAGE_DEFAULT", raising=False)
+        monkeypatch.delenv("KOJI_ADJUTANT_IMAGE_PULL_POLICY", raising=False)
+
+        # Create mock options with only some attributes
+        class MockOptions:
+            adjutant_task_image_default = "options/image:tag"
+            # adjutant_image_pull_policy is missing
+
+        options = MockOptions()
+        adj_config.initialize(options)
+
+        # Attribute in options should be used
+        assert adj_config.adjutant_task_image_default() == "options/image:tag"
+
+        # Missing attribute should fall back to default
+        assert adj_config.adjutant_image_pull_policy() == "if-not-present"
+
+    def test_reset_config_clears_options(self, monkeypatch):
+        """Test that reset_config() clears both _config and _options."""
+        adj_config.reset_config()
+        monkeypatch.delenv("KOJI_ADJUTANT_TASK_IMAGE_DEFAULT", raising=False)
+
+        # Initialize with options
+        class MockOptions:
+            adjutant_task_image_default = "options/image:tag"
+
+        options = MockOptions()
+        adj_config.initialize(options)
+        assert adj_config.adjutant_task_image_default() == "options/image:tag"
+
+        # Reset config
+        adj_config.reset_config()
+
+        # Should now use defaults
+        assert adj_config.adjutant_task_image_default() == "registry/almalinux:10"
