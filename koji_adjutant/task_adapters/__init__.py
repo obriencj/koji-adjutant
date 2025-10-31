@@ -11,6 +11,7 @@ from .base import BaseTaskAdapter, KojiLogSink, TaskContext, default_mounts
 from .buildarch import BuildArchAdapter
 from .createrepo import CreaterepoAdapter
 from .rebuild_srpm import RebuildSRPMAdapter
+from .buildsrpm_scm import BuildSRPMFromSCMAdapter
 from .logging import FileKojiLogSink
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "BuildArchAdapter",
     "CreaterepoAdapter",
     "RebuildSRPMAdapter",
+    "BuildSRPMFromSCMAdapter",
     "FileKojiLogSink",
     "KojiLogSink",
     "TaskContext",

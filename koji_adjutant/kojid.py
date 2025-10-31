@@ -137,6 +137,7 @@ try:
     from koji_adjutant.task_adapters.buildarch import BuildArchAdapter
     from koji_adjutant.task_adapters.createrepo import CreaterepoAdapter
     from koji_adjutant.task_adapters.rebuild_srpm import RebuildSRPMAdapter
+    from koji_adjutant.task_adapters.buildsrpm_scm import BuildSRPMFromSCMAdapter
     from koji_adjutant.task_adapters.logging import FileKojiLogSink
     from koji_adjutant.task_adapters.base import TaskContext
 except ImportError:
@@ -144,6 +145,7 @@ except ImportError:
     BuildArchAdapter = None
     CreaterepoAdapter = None
     RebuildSRPMAdapter = None
+    BuildSRPMFromSCMAdapter = None
     FileKojiLogSink = None
     TaskContext = None
     PodmanManager = None
@@ -5533,126 +5535,209 @@ class BuildSRPMFromSCMTask(BaseBuildTask):
 
         repo_info = self.session.repoInfo(repo_id, strict=True)
         event_id = repo_info['create_event']
-        build_tag = self.session.getTag(build_tag, strict=True, event=event_id)
+        build_tag_info = self.session.getTag(build_tag, strict=True, event=event_id)
+        
+        # Check if adjutant adapters are available
+        if BuildSRPMFromSCMAdapter is None or PodmanManager is None or FileKojiLogSink is None:
+            # Fallback to original BuildRoot-based execution
+            build_tag = build_tag_info  # Use for compatibility with original code
 
-        # need DNS in the chroot because "make srpm" may need to contact
-        # a SCM or lookaside cache to retrieve the srpm contents
-        rootopts = {'install_group': 'srpm-build',
-                    'setup_dns': True,
-                    'repo_id': repo_id}
-        if self.options.scm_credentials_dir is not None and os.path.isdir(
-                self.options.scm_credentials_dir):
-            rootopts['bind_opts'] = {'dirs': {self.options.scm_credentials_dir: '/credentials', }}
-            # Force internal_dev_setup back to true because bind_opts is used to turn it off
-            rootopts['internal_dev_setup'] = True
-        br_arch = self.find_arch('noarch', self.session.host.getHost(
-        ), self.session.getBuildConfig(build_tag['id'], event=event_id))
-        broot = BuildRoot(self.session, self.options,
-                          build_tag['id'], br_arch, self.id, **rootopts)
-        broot.workdir = self.workdir
+            # need DNS in the chroot because "make srpm" may need to contact
+            # a SCM or lookaside cache to retrieve the srpm contents
+            rootopts = {'install_group': 'srpm-build',
+                        'setup_dns': True,
+                        'repo_id': repo_id}
+            if self.options.scm_credentials_dir is not None and os.path.isdir(
+                    self.options.scm_credentials_dir):
+                rootopts['bind_opts'] = {'dirs': {self.options.scm_credentials_dir: '/credentials', }}
+                # Force internal_dev_setup back to true because bind_opts is used to turn it off
+                rootopts['internal_dev_setup'] = True
+            br_arch = self.find_arch('noarch', self.session.host.getHost(
+            ), self.session.getBuildConfig(build_tag_info['id'], event=event_id))
+            broot = BuildRoot(self.session, self.options,
+                              build_tag_info['id'], br_arch, self.id, **rootopts)
+            broot.workdir = self.workdir
 
-        self.logger.debug("Initializing buildroot")
-        broot.init()
+            self.logger.debug("Initializing buildroot")
+            broot.init()
 
-        # Setup files and directories for SRPM creation
-        # We can't put this under the mock homedir because that directory
-        # is completely blown away and recreated on every mock invocation
-        scmdir = broot.tmpdir() + '/scmroot'
-        koji.ensuredir(scmdir)
-        logfile = self.workdir + '/checkout.log'
-        uploadpath = self.getUploadDir()
+            # Setup files and directories for SRPM creation
+            # We can't put this under the mock homedir because that directory
+            # is completely blown away and recreated on every mock invocation
+            scmdir = broot.tmpdir() + '/scmroot'
+            koji.ensuredir(scmdir)
+            logfile = self.workdir + '/checkout.log'
+            uploadpath = self.getUploadDir()
 
-        self.run_callbacks('preSCMCheckout', scminfo=scm.get_info(),
-                           build_tag=build_tag, scratch=opts.get('scratch'),
-                           buildroot=broot)
-        # Check out spec file, etc. from SCM
-        sourcedir = scm.checkout(scmdir, self.session, uploadpath, logfile)
-        self.run_callbacks("postSCMCheckout",
-                           scminfo=scm.get_info(),
-                           build_tag=build_tag,
-                           scratch=opts.get('scratch'),
-                           srcdir=sourcedir,
-                           buildroot=broot)
-        # get the source before chown, git > 2.35.2 would refuse to that later
-        source = scm.get_source()
-        # chown the sourcedir and everything under it to the mockuser
-        # so we can build the srpm as non-root
-        uid = pwd.getpwnam(self.options.mockuser)[2]
-        # rpmbuild seems to complain if it's running in the "mock" group but
-        # files are in a different group
-        gid = grp.getgrnam('mock')[2]
-        self.chownTree(scmdir, uid, gid)
+            self.run_callbacks('preSCMCheckout', scminfo=scm.get_info(),
+                               build_tag=build_tag_info, scratch=opts.get('scratch'),
+                               buildroot=broot)
+            # Check out spec file, etc. from SCM
+            sourcedir = scm.checkout(scmdir, self.session, uploadpath, logfile)
+            self.run_callbacks("postSCMCheckout",
+                               scminfo=scm.get_info(),
+                               build_tag=build_tag_info,
+                               scratch=opts.get('scratch'),
+                               srcdir=sourcedir,
+                               buildroot=broot)
+            # get the source before chown, git > 2.35.2 would refuse to that later
+            source = scm.get_source()
+            # chown the sourcedir and everything under it to the mockuser
+            # so we can build the srpm as non-root
+            uid = pwd.getpwnam(self.options.mockuser)[2]
+            # rpmbuild seems to complain if it's running in the "mock" group but
+            # files are in a different group
+            gid = grp.getgrnam('mock')[2]
+            self.chownTree(scmdir, uid, gid)
 
-        # Hook for patching spec file in place
-        self.patch_scm_source(sourcedir, logfile, opts)
+            # Hook for patching spec file in place
+            self.patch_scm_source(sourcedir, logfile, opts)
 
-        # Find and verify that there is only one spec file.
-        spec_files = glob.glob("%s/*.spec" % sourcedir)
-        if not spec_files and self.options.support_rpm_source_layout:
-            # also check SPECS dir
-            spec_files = glob.glob("%s/SPECS/*.spec" % sourcedir)
-        if len(spec_files) == 0:
-            raise koji.BuildError("No spec file found")
-        elif len(spec_files) > 1:
-            # If there are multiple spec files, check whether one of them
-            # matches the SCM repo name
-            scm_spec_options = (
-                "%s/%s.spec" % (sourcedir, os.path.basename(sourcedir)),
-                "%s/SPECS/%s.spec" % (sourcedir, os.path.basename(sourcedir)),
+            # Find and verify that there is only one spec file.
+            spec_files = glob.glob("%s/*.spec" % sourcedir)
+            if not spec_files and self.options.support_rpm_source_layout:
+                # also check SPECS dir
+                spec_files = glob.glob("%s/SPECS/*.spec" % sourcedir)
+            if len(spec_files) == 0:
+                raise koji.BuildError("No spec file found")
+            elif len(spec_files) > 1:
+                # If there are multiple spec files, check whether one of them
+                # matches the SCM repo name
+                scm_spec_options = (
+                    "%s/%s.spec" % (sourcedir, os.path.basename(sourcedir)),
+                    "%s/SPECS/%s.spec" % (sourcedir, os.path.basename(sourcedir)),
+                )
+
+                spec_file = None
+                for scm_spec in scm_spec_options:
+                    if scm_spec in spec_files:
+                        # We have a match, so use this one.
+                        spec_file = scm_spec
+                        break
+
+                if not spec_file:
+                    # We didn't find an exact match, so throw an error
+                    raise koji.BuildError("Multiple spec files found but none is matching "
+                                          "SCM checkout dir name: %s" % spec_files)
+            else:
+                spec_file = spec_files[0]
+
+            # Run spec file sanity checks.  Any failures will throw a BuildError
+            self.spec_sanity_checks(spec_file)
+
+            # build srpm
+            self.logger.debug("Running srpm build")
+            broot.build_srpm(spec_file, sourcedir, scm.source_cmd)
+
+            srpms = glob.glob('%s/*.src.rpm' % broot.resultdir())
+            if len(srpms) == 0:
+                raise koji.BuildError("No srpms found in %s" % sourcedir)
+            elif len(srpms) > 1:
+                raise koji.BuildError("Multiple srpms found in %s: %s" % (sourcedir, ", ".join(srpms)))
+            else:
+                srpm = srpms[0]
+
+            # check srpm name
+            h = koji.get_rpm_header(srpm)
+            name = koji.get_header_field(h, 'name')
+            version = koji.get_header_field(h, 'version')
+            release = koji.get_header_field(h, 'release')
+            srpm_name = "%(name)s-%(version)s-%(release)s.src.rpm" % locals()
+            if srpm_name != os.path.basename(srpm):
+                raise koji.BuildError('srpm name mismatch: %s != %s' %
+                                      (srpm_name, os.path.basename(srpm)))
+
+            # upload srpm and return
+            self.uploadFile(srpm)
+
+            brootid = broot.id
+            log_files = list(broot.logs)
+
+            broot.expire()
+
+            return {'srpm': "%s/%s" % (uploadpath, srpm_name),
+                    'logs': ["%s/%s" % (uploadpath, f) for f in log_files],
+                    'brootid': brootid,
+                    'source': source,
+                    }
+        else:
+            # Use container-based adapter
+            self.logger.debug("Using container-based SRPM build from SCM execution")
+            
+            # Extract task parameters for adapter
+            task_params = {
+                'url': url,
+                'build_tag': build_tag_info['name'],
+                'opts': opts,
+            }
+            
+            # Create TaskContext
+            # work_dir should be /mnt/koji/work/<task_id>
+            work_dir = Path(self.workdir)
+            koji_mount_root = Path(self.options.topdir)
+            ctx = TaskContext(
+                task_id=self.id,
+                work_dir=work_dir,
+                koji_mount_root=koji_mount_root,
+                environment={},
             )
-
-            spec_file = None
-            for scm_spec in scm_spec_options:
-                if scm_spec in spec_files:
-                    # We have a match, so use this one.
-                    spec_file = scm_spec
-                    break
-
-            if not spec_file:
-                # We didn't find an exact match, so throw an error
-                raise koji.BuildError("Multiple spec files found but none is matching "
-                                      "SCM checkout dir name: %s" % spec_files)
-        else:
-            spec_file = spec_files[0]
-
-        # Run spec file sanity checks.  Any failures will throw a BuildError
-        self.spec_sanity_checks(spec_file)
-
-        # build srpm
-        self.logger.debug("Running srpm build")
-        broot.build_srpm(spec_file, sourcedir, scm.source_cmd)
-
-        srpms = glob.glob('%s/*.src.rpm' % broot.resultdir())
-        if len(srpms) == 0:
-            raise koji.BuildError("No srpms found in %s" % sourcedir)
-        elif len(srpms) > 1:
-            raise koji.BuildError("Multiple srpms found in %s: %s" % (sourcedir, ", ".join(srpms)))
-        else:
-            srpm = srpms[0]
-
-        # check srpm name
-        h = koji.get_rpm_header(srpm)
-        name = koji.get_header_field(h, 'name')
-        version = koji.get_header_field(h, 'version')
-        release = koji.get_header_field(h, 'release')
-        srpm_name = "%(name)s-%(version)s-%(release)s.src.rpm" % locals()
-        if srpm_name != os.path.basename(srpm):
-            raise koji.BuildError('srpm name mismatch: %s != %s' %
-                                  (srpm_name, os.path.basename(srpm)))
-
-        # upload srpm and return
-        self.uploadFile(srpm)
-
-        brootid = broot.id
-        log_files = list(broot.logs)
-
-        broot.expire()
-
-        return {'srpm': "%s/%s" % (uploadpath, srpm_name),
-                'logs': ["%s/%s" % (uploadpath, f) for f in log_files],
-                'brootid': brootid,
-                'source': source,
+            
+            # Initialize PodmanManager and log sink
+            manager = PodmanManager()
+            log_file_path = koji_mount_root / 'logs' / str(self.id) / 'container.log'
+            sink = FileKojiLogSink(self.logger, log_file_path)
+            
+            try:
+                # Run adapter
+                adapter = BuildSRPMFromSCMAdapter()
+                exit_code, adapter_result = adapter.run(ctx, manager, sink, task_params, session=self.session, event_id=event_id)
+                
+                if exit_code != 0:
+                    raise koji.BuildError("Container SRPM build from SCM failed with exit code %d" % exit_code)
+                
+                # Extract results from adapter
+                # Adapter returns: {srpm: path, logs: [paths], brootid: int, source: dict}
+                srpm_path = adapter_result.get('srpm', '')
+                log_paths = adapter_result.get('logs', [])
+                brootid = adapter_result.get('brootid', self.id)
+                source_info = adapter_result.get('source', {})
+                
+                # Extract filenames for processing
+                uploadpath = self.getUploadDir()
+                
+                # Parse paths from adapter (format: work/<task_id>/result/filename)
+                srpm_filename = os.path.basename(srpm_path) if srpm_path else ""
+                log_files = [os.path.basename(path) for path in log_paths]
+                
+                # Upload SRPM if found
+                if srpm_path:
+                    # Convert relative path to absolute
+                    if srpm_path.startswith('work/'):
+                        srpm_full_path = os.path.join(work_dir, srpm_path)
+                    else:
+                        srpm_full_path = os.path.join(work_dir, 'result', srpm_filename)
+                    
+                    if os.path.exists(srpm_full_path):
+                        self.uploadFile(srpm_full_path)
+                    else:
+                        raise koji.BuildError("Built SRPM file not found: %s" % srpm_full_path)
+                
+                # Upload log files
+                for log_file in log_files:
+                    log_full_path = os.path.join(work_dir, 'result', log_file)
+                    if os.path.exists(log_full_path):
+                        self.uploadFile(log_full_path)
+                
+                return {
+                    'srpm': "%s/%s" % (uploadpath, srpm_filename) if srpm_filename else "",
+                    'logs': ["%s/%s" % (uploadpath, f) for f in log_files],
+                    'brootid': brootid,
+                    'source': source_info,
                 }
+                
+            finally:
+                # Ensure log sink is closed
+                sink.close()
 
 
 class TagNotificationTask(BaseTaskHandler):

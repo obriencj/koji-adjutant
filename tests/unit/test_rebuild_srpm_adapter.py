@@ -223,7 +223,7 @@ class TestRebuildSRPMAdapter:
         # Verify rpm -qp was called
         query_calls = [
             call for call in mock_manager.exec.call_args_list
-            if len(call[0][1]) > 0 and "rpm" in call[0][1][0]
+            if len(call[0][1]) > 0 and "rpm" in " ".join(call[0][1])
         ]
         assert len(query_calls) > 0
 

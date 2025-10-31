@@ -1,8 +1,8 @@
 # Koji-Adjutant Project Status
 
 **Last Updated**: 2025-10-31
-**Current Phase**: Phase 2 Complete (with critical gap identified)
-**Status**: Production-Ready for BuildArch Tasks Only
+**Current Phase**: Phase 2.5 Week 1 Complete (SRPM Adapters - In Progress)
+**Status**: Production-Ready for BuildArch Tasks Only (Phase 2.5 Week 1: RebuildSRPM Complete)
 **Strategic Planner**: Overall coordination and planning
 
 ---
@@ -120,6 +120,37 @@ Koji-Adjutant successfully replaces mock-based build execution with podman conta
 - Production readiness: Conditional (staging recommended)
 - Documentation: Comprehensive
 
+### ✅ Phase 2.5 Week 1: RebuildSRPM Adapter (COMPLETE)
+
+**Duration**: Implementation session (2025-10-31)
+**Goal**: Implement RebuildSRPM adapter to enable SRPM rebuilding
+**Status**: 100% Complete
+
+**Deliverables**:
+- RebuildSRPMAdapter implementation (581 lines)
+- Unit tests (12 tests, 100% passing after QE fix)
+- Kojid integration with adapter detection and fallback
+- Module exports updated (__init__.py)
+- ADR 0006 (SRPM Task Adapters architecture)
+- Week 2 handoff document
+
+**Key Metrics**:
+- Tests: 12/12 passing (100%)
+- Coverage: 66.67% of rebuild_srpm.py (target was 80%)
+- Kojid integration: Complete with graceful fallback
+- Code quality: Excellent (type hints, docstrings, error handling)
+
+**Features Implemented**:
+- Policy-driven image selection for SRPM builds
+- Buildroot initialization with srpm-build group
+- SRPM unpacking (rpm -ivh)
+- SRPM rebuilding with dist tags (rpmbuild -bs)
+- SRPM validation
+- Monitoring registry integration
+- Guaranteed container cleanup
+
+**Next**: Phase 2.5 Week 2 (BuildSRPMFromSCMAdapter + SCM module)
+
 ---
 
 ## Current Capabilities
@@ -129,9 +160,10 @@ Koji-Adjutant successfully replaces mock-based build execution with podman conta
 1. **Container-Based Task Execution**
    - BuildArch (RPM builds from existing SRPMs)
    - Createrepo (repository generation)
+   - **RebuildSRPM** (rebuild existing SRPMs with correct dist tags) ✨ **NEW**
    - One ephemeral container per task
    - Guaranteed cleanup
-   - **Note**: Requires pre-built SRPM files; cannot build SRPMs from source
+   - **Note**: Can rebuild SRPMs; still need BuildSRPMFromSCM for complete workflow
 
 2. **Hub Integration**
    - Policy-driven image selection
@@ -178,13 +210,13 @@ Koji-Adjutant successfully replaces mock-based build execution with podman conta
 
 ### Known Limitations ⚠️
 
-1. **CRITICAL: Missing SRPM Task Adapters** 🚨:
-   - **buildSRPMFromSCM adapter NOT implemented** - Cannot build SRPMs from source control (git/svn)
-   - **rebuildSRPM adapter NOT implemented** - Cannot rebuild SRPMs with correct dist tags
+1. **CRITICAL: Missing BuildSRPMFromSCM Adapter** 🚨:
+   - ✅ **rebuildSRPM adapter COMPLETE** (Week 1) - Can rebuild SRPMs with correct dist tags
+   - ❌ **buildSRPMFromSCM adapter NOT implemented** - Cannot build SRPMs from source control (git/svn)
    - **Impact**: Cannot run complete build workflows (SCM → SRPM → RPM)
-   - **Workaround**: Only buildArch tasks with manually-provided SRPMs work
-   - **Blocker for**: Production deployment, koji-boxed integration, real builds
-   - **Required for**: Phase 2.5 or Phase 3 (high priority)
+   - **Workaround**: Can rebuild existing SRPMs; still need SCM checkout support
+   - **Blocker for**: Production deployment, koji-boxed integration, real builds from source
+   - **Required for**: Phase 2.5 Week 2 (in progress)
 
 2. **Testing**:
    - 15% of tests failing (mostly minor issues)
@@ -418,39 +450,44 @@ koji-adjutant/
 
 ## Next Steps
 
-### CRITICAL: Phase 2.5 - SRPM Task Adapters (BLOCKER) 🚨
+### CURRENT: Phase 2.5 Week 2 - BuildSRPMFromSCM Adapter (BLOCKER) 🚨
 
 **Must complete before production deployment or integration testing**
 
-**Timeline**: 2-3 weeks
+**Timeline**: 7 days (Week 2 of 3)
 **Priority**: CRITICAL
 
-1. **Design SRPM Adapters** (Week 1)
-   - Architecture document for SRPM task adapters
-   - SCM integration strategy (git, svn support)
-   - Network policy requirements for SCM checkout
-   - Buildroot configuration for srpm-build group
-   - Testing strategy
+**Week 1 Status**: ✅ COMPLETE - RebuildSRPM adapter delivered
 
-2. **Implement RebuildSRPM Adapter** (Week 1-2)
-   - Container spec building
-   - SRPM unpack and rebuild
-   - Macro application (dist tags)
-   - Result validation and upload
-   - Unit and integration tests
+**Week 2 Tasks** (In Progress):
+1. **SCM Module** (Days 1-2)
+   - Protocol definition (SCMHandler)
+   - Git handler implementation
+   - URL parsing and checkout logic
+   - Unit tests for SCM module
 
-3. **Implement BuildSRPMFromSCM Adapter** (Week 2-3)
-   - SCM checkout support (git, svn)
-   - Build command execution (make srpm, rpmbuild -bs)
-   - Network access configuration
-   - SRPM validation
-   - Unit and integration tests
+2. **BuildSRPMFromSCMAdapter** (Days 3-5)
+   - Container spec with network enabled
+   - SCM checkout integration
+   - Build method detection (make srpm vs rpmbuild)
+   - SRPM build from checked-out source
+   - Unit tests for adapter
 
-4. **Validation** (Week 3)
-   - Test complete build workflow (SCM → SRPM → RPM)
-   - Integration with existing BuildArch adapter
-   - Performance validation
-   - Documentation updates
+3. **Kojid Integration** (Day 6)
+   - Modify BuildSRPMFromSCMTask.handler()
+   - Adapter detection with fallback
+   - Testing and validation
+
+4. **Refinement** (Day 7)
+   - Fix any issues
+   - Code review
+   - Documentation
+
+**Week 3 Tasks** (Upcoming):
+- End-to-end workflow testing (SCM → SRPM → RPM)
+- Performance validation
+- Documentation updates
+- Phase 2.5 completion report
 
 ### Immediate (After Phase 2.5)
 
