@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}Container {{ container_id[:12] }}... - Koji Adjutant Monitor{% endblock %}
+
+{% block content %}
+<section>
+    <a href="/" class="back-link">Back to Dashboard</a>
+    <h2>Container: <span id="container-id">{{ container_id }}</span></h2>
+</section>
+
+<section class="info-grid">
+    <div class="info-card">
+        <h3>Container Spec</h3>
+        <dl>
+            <dt>Image:</dt>
+            <dd id="container-image">-</dd>
+            <dt>Status:</dt>
+            <dd id="container-status">-</dd>
+            <dt>Command:</dt>
+            <dd id="container-command">-</dd>
+            <dt>Workdir:</dt>
+            <dd id="container-workdir">-</dd>
+            <dt>User:</dt>
+            <dd id="container-user">-</dd>
+            <dt>Created:</dt>
+            <dd id="container-created">-</dd>
+            <dt>Started:</dt>
+            <dd id="container-started">-</dd>
+            <dt>Finished:</dt>
+            <dd id="container-finished">-</dd>
+        </dl>
+        <a href="#" id="task-link" style="display: none;">View Task Details</a>
+    </div>
+
+    <div class="info-card">
+        <h3>Resources</h3>
+        <dl>
+            <dt>Memory Limit:</dt>
+            <dd id="memory-limit">-</dd>
+            <dt>CPU Limit:</dt>
+            <dd id="cpu-limit">-</dd>
+        </dl>
+
+        <h3 style="margin-top: 1.5rem;">Mounts</h3>
+        <table id="mounts-table">
+            <thead>
+                <tr>
+                    <th>Source</th>
+                    <th>Target</th>
+                    <th>Read-Only</th>
+                </tr>
+            </thead>
+            <tbody id="mounts-tbody">
+                <tr><td colspan="3">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const containerId = "{{ container_id }}";
+
+async function fetchContainerDetails() {
+    try {
+        const response = await fetch(`/api/v1/containers/${containerId}`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        updateContainerDetails(data);
+    } catch (err) {
+        console.error('Failed to fetch container details:', err);
+        document.getElementById('container-status').textContent = 'Error loading container';
+    }
+}
+
+function updateContainerDetails(data) {
+    document.getElementById('container-image').textContent = data.image || '-';
+    
+    const statusEl = document.getElementById('container-status');
+    statusEl.innerHTML = `<span class="status-badge status-${data.status || 'unknown'}">${escapeHtml(data.status || 'unknown')}</span>`;
+    
+    const commandEl = document.getElementById('container-command');
+    if (data.spec && data.spec.command) {
+        if (Array.isArray(data.spec.command)) {
+            commandEl.textContent = data.spec.command.join(' ');
+        } else {
+            commandEl.textContent = data.spec.command;
+        }
+    } else {
+        commandEl.textContent = '-';
+    }
+    
+    document.getElementById('container-workdir').textContent = (data.spec && data.spec.workdir) || '-';
+    document.getElementById('container-user').textContent = (data.spec && data.spec.user) || '-';
+    
+    const createdEl = document.getElementById('container-created');
+    if (data.created_at) {
+        createdEl.textContent = new Date(data.created_at).toLocaleString();
+    } else {
+        createdEl.textContent = '-';
+    }
+    
+    const startedEl = document.getElementById('container-started');
+    if (data.started_at) {
+        startedEl.textContent = new Date(data.started_at).toLocaleString();
+    } else {
+        startedEl.textContent = '-';
+    }
+    
+    const finishedEl = document.getElementById('container-finished');
+    if (data.finished_at) {
+        finishedEl.textContent = new Date(data.finished_at).toLocaleString();
+    } else {
+        finishedEl.textContent = '-';
+    }
+
+    // Resources
+    const memoryEl = document.getElementById('memory-limit');
+    if (data.resource_limits && data.resource_limits.memory_bytes) {
+        memoryEl.textContent = formatBytes(data.resource_limits.memory_bytes);
+    } else {
+        memoryEl.textContent = 'Unlimited';
+    }
+    
+    const cpuEl = document.getElementById('cpu-limit');
+    if (data.resource_limits && data.resource_limits.cpus) {
+        cpuEl.textContent = data.resource_limits.cpus.toString();
+    } else {
+        cpuEl.textContent = 'Unlimited';
+    }
+
+    // Mounts
+    const mountsTbody = document.getElementById('mounts-tbody');
+    if (data.mounts && data.mounts.length > 0) {
+        mountsTbody.innerHTML = data.mounts.map(mount => `
+            <tr>
+                <td>${escapeHtml(mount.source || '-')}</td>
+                <td>${escapeHtml(mount.target || '-')}</td>
+                <td>${mount.read_only ? 'Yes' : 'No'}</td>
+            </tr>
+        `).join('');
+    } else {
+        mountsTbody.innerHTML = '<tr><td colspan="3">No mounts</td></tr>';
+    }
+
+    // Task link
+    if (data.task_id) {
+        const taskLink = document.getElementById('task-link');
+        taskLink.href = `/tasks/${data.task_id}`;
+        taskLink.style.display = 'inline-block';
+    }
+}
+
+function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const gb = bytes / (1024 ** 3);
+    if (gb >= 1) return `${gb.toFixed(2)} GB`;
+    const mb = bytes / (1024 ** 2);
+    if (mb >= 1) return `${mb.toFixed(2)} MB`;
+    const kb = bytes / 1024;
+    return `${kb.toFixed(2)} KB`;
+}
+
+function escapeHtml(text) {
+    if (text === null || text === undefined) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Initialize
+window.addEventListener('DOMContentLoaded', fetchContainerDetails);
+</script>
+{% endblock %}

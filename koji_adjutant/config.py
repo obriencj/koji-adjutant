@@ -350,6 +350,20 @@ def adjutant_monitoring_task_history_ttl() -> int:
     )
 
 
+def adjutant_podman_socket() -> str:
+    """Podman socket path (default: unix:///var/run/podman.sock).
+
+    URI format expected by podman-py PodmanClient:
+    - unix:///var/run/podman.sock (local Unix socket)
+    - http+unix:///var/run/podman.sock (HTTP over Unix socket)
+    """
+    return _get_config_value(
+        "podman_socket",
+        "unix:///var/run/podman.sock",
+        env_var="KOJI_ADJUTANT_PODMAN_SOCKET",
+    )
+
+
 def reset_config() -> None:
     """Reset config cache (useful for testing)."""
     global _config, _options

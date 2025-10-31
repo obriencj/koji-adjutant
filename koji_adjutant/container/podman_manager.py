@@ -390,7 +390,10 @@ class PodmanManager(ContainerManager):
             if PodmanClient is None:
                 # In test environments without podman, allow stubbing
                 raise ContainerError("Podman client not available")
-            self._client = PodmanClient()
+            # Get socket path from config
+            socket_path = adj_config.adjutant_podman_socket()
+            logger.debug("Initializing PodmanClient with socket: %s", socket_path)
+            self._client = PodmanClient(base_url=socket_path)
 
     def _has_image(self, image: str) -> bool:
         assert self._client is not None

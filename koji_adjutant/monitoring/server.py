@@ -8,6 +8,7 @@ import socket
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
@@ -15,6 +16,15 @@ from urllib.parse import parse_qs, urlparse
 from .registry import ContainerInfo, ContainerRegistry, TaskInfo, TaskRegistry
 
 logger = logging.getLogger(__name__)
+
+# Flask integration (optional)
+try:
+    from koji_adjutant.web import create_app
+
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+    create_app = None
 
 
 class MonitoringRequestHandler(BaseHTTPRequestHandler):
@@ -55,7 +65,7 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
             parsed_path = urlparse(self.path)
             path = parsed_path.path
 
-            # Route requests
+            # Route API requests to existing handlers
             if path == "/api/v1/status":
                 self._handle_status()
             elif path == "/api/v1/containers":
@@ -74,7 +84,11 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
                     task_id = int(parts[-1])
                     self._handle_task_details(task_id)
             else:
-                self._send_error(404, "Not Found", "Unknown endpoint")
+                # Non-API routes: delegate to Flask (if available)
+                if FLASK_AVAILABLE and self.server.flask_app:
+                    self._handle_flask_request()
+                else:
+                    self._send_error(404, "Not Found", "Unknown endpoint")
 
         except Exception as exc:
             logger.error("Error handling request: %s", exc, exc_info=True)
@@ -293,6 +307,76 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
         error_data = {"error": error, "error_code": error.upper().replace(" ", "_"), "message": message}
         self._send_json(status_code, error_data)
 
+    def _handle_flask_request(self):
+        """Handle request via Flask WSGI application."""
+        # Read request body if present (for POST/PUT requests)
+        content_length = self.headers.get("Content-Length")
+        request_body = b""
+        if content_length:
+            try:
+                content_length = int(content_length)
+                if content_length > 0:
+                    request_body = self.rfile.read(content_length)
+            except (ValueError, OSError):
+                pass
+
+        # Create WSGI environment
+        environ = {
+            "REQUEST_METHOD": self.command,
+            "PATH_INFO": urlparse(self.path).path,
+            "QUERY_STRING": urlparse(self.path).query,
+            "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+            "CONTENT_LENGTH": str(len(request_body)),
+            "SERVER_NAME": self.server.server_address[0],
+            "SERVER_PORT": str(self.server.server_address[1]),
+            "SERVER_PROTOCOL": self.protocol_version,
+            "wsgi.version": (1, 0),
+            "wsgi.url_scheme": "http",
+            "wsgi.input": BytesIO(request_body),
+            "wsgi.errors": BytesIO(),
+            "wsgi.multithread": True,
+            "wsgi.multiprocess": False,
+            "wsgi.run_once": False,
+        }
+
+        # Add headers
+        for key, value in self.headers.items():
+            key = key.replace("-", "_").upper()
+            if key not in ("CONTENT_TYPE", "CONTENT_LENGTH"):
+                key = f"HTTP_{key}"
+            environ[key] = value
+
+        # Call Flask WSGI app
+        app = self.server.flask_app
+        response_data = {}
+
+        def start_response(status, response_headers):
+            response_data["status"] = status
+            response_data["headers"] = response_headers
+
+        app_iter = app(environ, start_response)
+
+        # Send response
+        status_parts = response_data["status"].split(" ", 1)
+        status_code = int(status_parts[0])
+        status_message = status_parts[1] if len(status_parts) > 1 else ""
+
+        self.send_response(status_code, status_message)
+
+        # Send headers
+        for header, value in response_data["headers"]:
+            self.send_header(header, value)
+        self.end_headers()
+
+        # Send body
+        try:
+            for chunk in app_iter:
+                if chunk:
+                    self.wfile.write(chunk)
+        finally:
+            if hasattr(app_iter, "close"):
+                app_iter.close()
+
 
 class MonitoringServer(ThreadingHTTPServer):
     """HTTP server for monitoring endpoints."""
@@ -319,6 +403,14 @@ class MonitoringServer(ThreadingHTTPServer):
         self.worker_id = worker_id
         self.container_registry = container_registry
         self.task_registry = task_registry
+
+        # Create Flask app if available
+        self.flask_app = None
+        if FLASK_AVAILABLE and create_app:
+            try:
+                self.flask_app = create_app(worker_id, container_registry, task_registry)
+            except Exception as exc:
+                logger.warning("Failed to create Flask app: %s", exc)
 
         # Create server socket
         server_address = (bind_address, port)

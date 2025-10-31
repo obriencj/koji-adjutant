@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Koji Adjutant Monitor{% endblock %}
+
+{% block content %}
+<!-- Status Section -->
+<section class="status-section">
+    <h2 id="worker-id">Worker: ...</h2>
+    <span id="status-badge" class="status-badge">...</span>
+    <p>Uptime: <span id="uptime">...</span></p>
+</section>
+
+<!-- Metrics Cards -->
+<section class="metrics-grid">
+    <div class="metric-card">
+        <h3>Active Tasks</h3>
+        <p class="metric-value" id="active-tasks">-</p>
+    </div>
+    <div class="metric-card">
+        <h3>Active Containers</h3>
+        <p class="metric-value" id="active-containers">-</p>
+    </div>
+    <div class="metric-card">
+        <h3>Completed Today</h3>
+        <p class="metric-value" id="completed-today">-</p>
+    </div>
+    <div class="metric-card">
+        <h3>Last Task</h3>
+        <p class="metric-value" id="last-task-time">-</p>
+    </div>
+</section>
+
+<!-- Tasks Table -->
+<section class="table-section">
+    <h2>Active Tasks</h2>
+    <table id="tasks-table">
+        <thead>
+            <tr>
+                <th>Task ID</th>
+                <th>Type</th>
+                <th>Arch</th>
+                <th>Tag</th>
+                <th>Status</th>
+                <th>Started</th>
+            </tr>
+        </thead>
+        <tbody id="tasks-tbody">
+            <tr><td colspan="6">Loading...</td></tr>
+        </tbody>
+    </table>
+</section>
+
+<!-- Containers Table -->
+<section class="table-section">
+    <h2>Active Containers</h2>
+    <table id="containers-table">
+        <thead>
+            <tr>
+                <th>Container ID</th>
+                <th>Task ID</th>
+                <th>Image</th>
+                <th>Status</th>
+                <th>Started</th>
+            </tr>
+        </thead>
+        <tbody id="containers-tbody">
+            <tr><td colspan="5">Loading...</td></tr>
+        </tbody>
+    </table>
+</section>
+
+<!-- Auto-refresh Controls -->
+<section class="controls-section">
+    <label>
+        <input type="checkbox" id="auto-refresh-toggle" checked>
+        Auto-refresh
+    </label>
+    <label>
+        Interval:
+        <select id="refresh-interval">
+            <option value="2000">2s</option>
+            <option value="5000" selected>5s</option>
+            <option value="10000">10s</option>
+            <option value="30000">30s</option>
+        </select>
+    </label>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Initialize dashboard auto-refresh
+    window.addEventListener('DOMContentLoaded', () => {
+        if (typeof initDashboard === 'function') {
+            initDashboard();
+        }
+    });
+</script>
+{% endblock %}

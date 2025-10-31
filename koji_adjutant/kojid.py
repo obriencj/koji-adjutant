@@ -7250,7 +7250,7 @@ def get_options():
                 'allow_noverifyssl': False,
                 'allow_password_in_scm_url': False,
                 # Koji-Adjutant settings
-                'adjutant_task_image_default': 'docker.io/almalinux/almalinux:9-minimal',
+                'adjutant_task_image_default': 'docker.io/almalinux/9-minimal',
                 'adjutant_image_pull_policy': 'if-not-present',
                 'adjutant_network_enabled': True,
                 'adjutant_policy_enabled': True,
@@ -7261,7 +7261,8 @@ def get_options():
                 'adjutant_container_mounts': '/mnt/koji:/mnt/koji:rw:z',
                 'adjutant_container_timeouts': 'pull=300,start=60,stop_grace=20',
                 'adjutant_monitoring_container_history_ttl': 3600,
-                'adjutant_monitoring_task_history_ttl': 86400}
+                'adjutant_monitoring_task_history_ttl': 86400,
+                'adjutant_podman_socket': 'unix:///var/run/podman.sock'}
     if config.has_section('kojid'):
         for name, value in config.items('kojid'):
             if name in ['sleeptime', 'maxjobs', 'minspace', 'retry_interval',

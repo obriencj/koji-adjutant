@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}Task #{{ task_id }} - Koji Adjutant Monitor{% endblock %}
+
+{% block content %}
+<section>
+    <a href="/" class="back-link">Back to Dashboard</a>
+    <h2>Task #<span id="task-id">{{ task_id }}</span></h2>
+</section>
+
+<section class="info-grid">
+    <div class="info-card">
+        <h3>Task Information</h3>
+        <dl>
+            <dt>Type:</dt>
+            <dd id="task-type">-</dd>
+            <dt>Status:</dt>
+            <dd id="task-status">-</dd>
+            <dt>Arch:</dt>
+            <dd id="task-arch">-</dd>
+            <dt>Tag:</dt>
+            <dd id="task-tag">-</dd>
+            <dt>SRPM:</dt>
+            <dd id="task-srpm">-</dd>
+            <dt>Started:</dt>
+            <dd id="task-started">-</dd>
+            <dt>Finished:</dt>
+            <dd id="task-finished">-</dd>
+            <dt>Progress:</dt>
+            <dd id="task-progress">-</dd>
+        </dl>
+    </div>
+
+    <div class="info-card">
+        <h3>Container</h3>
+        <dl>
+            <dt>Container ID:</dt>
+            <dd id="container-id">-</dd>
+            <dt>Image:</dt>
+            <dd id="container-image">-</dd>
+        </dl>
+        <a href="#" id="container-link" style="display: none;">View Container Details</a>
+    </div>
+</section>
+
+<section class="log-viewer">
+    <h3>
+        Build Log (last 100 lines)
+        <button onclick="refreshLogs()">Refresh</button>
+    </h3>
+    <pre id="log-content">Loading logs...</pre>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const taskId = {{ task_id }};
+let logRefreshTimer = null;
+let taskRefreshTimer = null;
+
+async function fetchTaskDetails() {
+    try {
+        const response = await fetch(`/api/v1/tasks/${taskId}`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        updateTaskDetails(data);
+
+        // Auto-refresh logs if running
+        if (data.status === 'running' && !logRefreshTimer) {
+            logRefreshTimer = setInterval(fetchLogs, 2000);
+        } else if (data.status !== 'running' && logRefreshTimer) {
+            clearInterval(logRefreshTimer);
+            logRefreshTimer = null;
+        }
+
+        // Auto-refresh task details if running
+        if (data.status === 'running' && !taskRefreshTimer) {
+            taskRefreshTimer = setInterval(fetchTaskDetails, 5000);
+        } else if (data.status !== 'running' && taskRefreshTimer) {
+            clearInterval(taskRefreshTimer);
+            taskRefreshTimer = null;
+        }
+    } catch (err) {
+        console.error('Failed to fetch task details:', err);
+        document.getElementById('task-status').textContent = 'Error loading task';
+    }
+}
+
+async function fetchLogs() {
+    try {
+        const response = await fetch(`/api/v1/tasks/${taskId}/logs?tail=100`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const text = await response.text();
+        document.getElementById('log-content').textContent = text || 'No log content available';
+    } catch (err) {
+        console.error('Failed to fetch logs:', err);
+        document.getElementById('log-content').textContent = 'Error loading logs: ' + err.message;
+    }
+}
+
+function updateTaskDetails(data) {
+    document.getElementById('task-type').textContent = data.type || '-';
+    
+    const statusEl = document.getElementById('task-status');
+    statusEl.innerHTML = `<span class="status-badge status-${data.status || 'unknown'}">${escapeHtml(data.status || 'unknown')}</span>`;
+    
+    document.getElementById('task-arch').textContent = data.arch || '-';
+    document.getElementById('task-tag').textContent = data.tag || '-';
+    document.getElementById('task-srpm').textContent = data.srpm || '-';
+    
+    const startedEl = document.getElementById('task-started');
+    if (data.started_at) {
+        startedEl.textContent = new Date(data.started_at).toLocaleString();
+    } else {
+        startedEl.textContent = '-';
+    }
+    
+    const finishedEl = document.getElementById('task-finished');
+    if (data.finished_at) {
+        finishedEl.textContent = new Date(data.finished_at).toLocaleString();
+    } else {
+        finishedEl.textContent = 'Running';
+    }
+    
+    const progressEl = document.getElementById('task-progress');
+    if (data.progress) {
+        if (typeof data.progress === 'object') {
+            progressEl.textContent = JSON.stringify(data.progress);
+        } else {
+            progressEl.textContent = data.progress;
+        }
+    } else {
+        progressEl.textContent = '-';
+    }
+
+    if (data.container_id) {
+        const containerIdEl = document.getElementById('container-id');
+        containerIdEl.textContent = data.container_id.length > 12
+            ? data.container_id.substring(0, 12) + '...'
+            : data.container_id;
+        
+        const containerLink = document.getElementById('container-link');
+        containerLink.href = `/containers/${data.container_id}`;
+        containerLink.style.display = 'inline-block';
+        
+        const containerImageEl = document.getElementById('container-image');
+        containerImageEl.textContent = '-';
+    }
+}
+
+function refreshLogs() {
+    fetchLogs();
+}
+
+function escapeHtml(text) {
+    if (text === null || text === undefined) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Initialize
+window.addEventListener('DOMContentLoaded', () => {
+    fetchTaskDetails();
+    fetchLogs();
+});
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+    if (logRefreshTimer) clearInterval(logRefreshTimer);
+    if (taskRefreshTimer) clearInterval(taskRefreshTimer);
+});
+</script>
+{% endblock %}
