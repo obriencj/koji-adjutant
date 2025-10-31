@@ -10,6 +10,25 @@
     <p>Uptime: <span id="uptime">...</span></p>
 </section>
 
+<!-- Podman Health Section -->
+<section class="podman-health-section">
+    <div class="podman-health-card">
+        <h3>🐳 Podman Connectivity</h3>
+        <div class="podman-status">
+            <span id="podman-status-badge" class="status-badge status-unknown">...</span>
+            <p id="podman-message">Checking...</p>
+        </div>
+        <div class="podman-details" id="podman-details" style="display: none;">
+            <p><strong>Socket:</strong> <span id="podman-socket">-</span></p>
+            <p><strong>Version:</strong> <span id="podman-version">-</span></p>
+            <p><strong>API Version:</strong> <span id="podman-api-version">-</span></p>
+        </div>
+        <div class="podman-error" id="podman-error" style="display: none;">
+            <p class="error-message" id="podman-error-message">-</p>
+        </div>
+    </div>
+</section>
+
 <!-- Metrics Cards -->
 <section class="metrics-grid">
     <div class="metric-card">

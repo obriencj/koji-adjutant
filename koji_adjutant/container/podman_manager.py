@@ -81,6 +81,40 @@ class PodmanManager(ContainerManager):
 
     # --- public interface ---
 
+    def health_check(self) -> dict:
+        """Check Podman connectivity and return status.
+
+        Returns:
+            dict with keys:
+                - status: "healthy" or "unhealthy"
+                - message: Status message
+                - version: Podman version info (if available)
+                - socket: Socket path used
+        """
+        socket_path = adj_config.adjutant_podman_socket()
+        try:
+            self._ensure_client()
+            # Try to ping Podman daemon
+            info = self._client.ping()
+            # Get version info
+            version_info = self._client.version()
+
+            return {
+                "status": "healthy",
+                "message": "Connected to Podman daemon",
+                "socket": socket_path,
+                "version": version_info.get("Version", "unknown"),
+                "api_version": version_info.get("ApiVersion", "unknown"),
+            }
+        except Exception as exc:
+            logger.warning("Podman health check failed: %s", exc)
+            return {
+                "status": "unhealthy",
+                "message": f"Cannot connect to Podman: {exc}",
+                "socket": socket_path,
+                "error": str(exc),
+            }
+
     def ensure_image_available(self, image: str) -> None:
         self._ensure_client()
         try:

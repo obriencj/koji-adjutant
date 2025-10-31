@@ -126,10 +126,14 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
         # Capacity is typically in kojid options, but we'll default to 4
         capacity_value = 4  # Default capacity
 
+        # Check Podman connectivity
+        podman_health = self._check_podman_health()
+
         status_data = {
             "worker_id": self.worker_id,
             "uptime_seconds": int(time.time() - self.server_start_time),
-            "status": "healthy",
+            "status": "healthy" if podman_health["status"] == "healthy" else "degraded",
+            "podman": podman_health,
             "capacity": capacity_value,
             "active_tasks": active_tasks,
             "containers_active": active_containers,
@@ -291,6 +295,26 @@ class MonitoringRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             logger.error("Error reading log file: %s", exc, exc_info=True)
             self._send_error(500, "Internal Server Error", f"Failed to read log file: {exc}")
+
+    def _check_podman_health(self) -> dict:
+        """Check Podman connectivity health.
+
+        Returns:
+            dict with status, message, and version info
+        """
+        try:
+            # Import PodmanManager here to avoid circular dependency
+            from ..container.podman_manager import PodmanManager
+
+            manager = PodmanManager()
+            return manager.health_check()
+        except Exception as exc:
+            logger.warning("Failed to check Podman health: %s", exc)
+            return {
+                "status": "unknown",
+                "message": f"Health check failed: {exc}",
+                "error": str(exc),
+            }
 
     def _send_json(self, status_code: int, data: dict):
         """Send JSON response."""

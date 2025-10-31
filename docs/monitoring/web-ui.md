@@ -37,6 +37,13 @@ The koji-adjutant monitoring web UI provides a visual dashboard for monitoring w
   - Uptime display
   - Capacity indicator (active tasks / capacity)
 
+- **Podman Health Section**
+  - Podman connectivity status (healthy/unhealthy/unknown)
+  - Socket path used for connection
+  - Podman version and API version (when healthy)
+  - Error details (when unhealthy)
+  - Auto-refreshes with dashboard
+
 - **Metrics Cards**
   - Active Tasks (with capacity ratio)
   - Active Containers count
@@ -98,6 +105,13 @@ The koji-adjutant monitoring web UI provides a visual dashboard for monitoring w
 The web UI consumes the existing REST API endpoints:
 
 - `GET /api/v1/status` - Worker status and metrics
+  - Includes `podman` object with connectivity health:
+    - `status`: "healthy", "unhealthy", or "unknown"
+    - `message`: Status description
+    - `socket`: Socket path used
+    - `version`: Podman version (if healthy)
+    - `api_version`: Podman API version (if healthy)
+    - `error`: Error details (if unhealthy)
 - `GET /api/v1/tasks` - List active tasks
 - `GET /api/v1/tasks/<id>` - Task details
 - `GET /api/v1/tasks/<id>/logs?tail=100` - Task logs (text/plain)

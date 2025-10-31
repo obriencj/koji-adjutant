@@ -91,6 +91,50 @@ function updateStatus(data) {
             ? formatRelativeTime(data.last_task_time)
             : 'Never';
     }
+
+    // Update Podman health status
+    if (data.podman) {
+        updatePodmanHealth(data.podman);
+    }
+}
+
+// Update Podman health display
+function updatePodmanHealth(podman) {
+    const statusBadge = document.getElementById('podman-status-badge');
+    const message = document.getElementById('podman-message');
+    const details = document.getElementById('podman-details');
+    const errorDiv = document.getElementById('podman-error');
+    const errorMessage = document.getElementById('podman-error-message');
+
+    if (!statusBadge || !message) return;
+
+    // Update status badge
+    statusBadge.textContent = podman.status;
+    statusBadge.className = `status-badge status-${podman.status}`;
+
+    // Update message
+    message.textContent = podman.message;
+
+    // Show/hide details or error
+    if (podman.status === 'healthy') {
+        if (details) {
+            details.style.display = 'block';
+            document.getElementById('podman-socket').textContent = podman.socket || '-';
+            document.getElementById('podman-version').textContent = podman.version || '-';
+            document.getElementById('podman-api-version').textContent = podman.api_version || '-';
+        }
+        if (errorDiv) {
+            errorDiv.style.display = 'none';
+        }
+    } else {
+        if (details) {
+            details.style.display = 'none';
+        }
+        if (errorDiv && errorMessage && podman.error) {
+            errorDiv.style.display = 'block';
+            errorMessage.textContent = podman.error;
+        }
+    }
 }
 
 // Fetch tasks from API
